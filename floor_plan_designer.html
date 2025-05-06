@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Floor Plan Designer</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: Arial, sans-serif;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    .topbar {
+      background-color: #2c3e50;
+      color: white;
+      padding: 10px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .logo {
+      font-size: 20px;
+      font-weight: bold;
+    }
+
+    .table-presets {
+      display: flex;
+      gap: 10px;
+    }
+
+    .preset {
+      background-color: #3498db;
+      color: white;
+      padding: 8px 12px;
+      border-radius: 4px;
+      cursor: grab;
+      font-size: 14px;
+      user-select: none;
+    }
+
+    .main-container {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    .floor-plan {
+      flex: 1;
+      background-color: #ecf0f1;
+      position: relative;
+      overflow: auto;
+    }
+
+    .grid {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-size: 20px 20px;
+      background-image:
+        linear-gradient(to right, #ddd 1px, transparent 1px),
+        linear-gradient(to bottom, #ddd 1px, transparent 1px);
+    }
+
+    .sidebar {
+      width: 300px;
+      background-color: #f8f9fa;
+      border-left: 1px solid #ddd;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .sidebar-section {
+      padding: 15px;
+      border-bottom: 1px solid #ddd;
+    }
+
+    .sidebar-title {
+      font-size: 16px;
+      font-weight: bold;
+      margin-bottom: 10px;
+      color: #2c3e50;
+    }
+
+    .names-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #namesList {
+      width: 100%;
+      height: 100%;
+      resize: none;
+      border: 1px solid #ddd;
+      padding: 8px;
+      font-size: 14px;
+      margin-bottom: 10px;
+    }
+
+    .name-item {
+      background-color: #3498db;
+      color: white;
+      padding: 6px 10px;
+      border-radius: 4px;
+      margin-bottom: 5px;
+      cursor: grab;
+      user-select: none;
+      display: inline-block;
+      margin-right: 5px;
+      margin-bottom: 5px;
+    }
+
+    .button {
+      background-color: #2c3e50;
+      color: white;
+      border: none;
+      padding: 8px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      margin-top: 5px;
+    }
+
+    .delete-button {
+      background-color: #e74c3c;
+    }
+
+    .table {
+      position: absolute;
+      background-color: #fff;
+      border: 2px solid #3498db;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: move;
+    }
+
+    .table.rectangular {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .table.round {
+      border-radius: 50%;
+    }
+
+    .chair {
+      position: absolute;
+      width: 20px;
+      height: 20px;
+      background-color: #95a5a6;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      color: white;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      z-index: 10;
+    }
+
+    .chair.occupied {
+      background-color: #e74c3c;
+    }
+
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 100;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.5);
+    }
+
+    .modal-content {
+      background-color: #fefefe;
+      margin: 15% auto;
+      padding: 20px;
+      border-radius: 5px;
+      width: 300px;
+    }
+
+    .modal-field {
+      margin-bottom: 15px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+    }
+
+    input[type="number"],
+    select {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+    }
+
+    .modal-buttons {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    .names-display {
+      margin-top: 10px;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+
+    .floor-plan-container {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: auto;
+    }
+
+    .status-bar {
+      padding: 5px 10px;
+      background-color: #f8f9fa;
+      border-top: 1px solid #ddd;
+      font-size: 12px;
+      color: #555;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="topbar">
+    <div class="logo">Floor Plan Designer</div>
+    <div class="table-presets">
+      <div class="preset" data-type="rectangular">Rectangular Table</div>
+      <div class="preset" data-type="round">Round Table</div>
+    </div>
+  </div>
+
+  <div class="main-container">
+    <div class="floor-plan">
+      <div class="floor-plan-container">
+        <div class="grid"></div>
+        <!-- Tables will be added here -->
+      </div>
+    </div>
+
+    <div class="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-title">People</div>
+        <div class="names-container">
+          <textarea id="namesList" placeholder="Enter names (one per line)"></textarea>
+          <button id="saveNames" class="button">Save Names</button>
+        </div>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-title">Seating List</div>
+        <div id="namesDisplay" class="names-display"></div>
+      </div>
+
+      <div class="sidebar-section">
+        <button id="clearAll" class="button delete-button">Clear Floor Plan</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="status-bar">Ready</div>
+
+  <!-- Modal for table configuration -->
+  <div id="tableModal" class="modal">
+    <div class="modal-content">
+      <div id="rectangularFields">
+        <div class="modal-field">
+          <label for="tableWidth">Width (cm):</label>
+          <input type="number" id="tableWidth" min="60" max="300" value="120">
+        </div>
+        <div class="modal-field">
+          <label for="tableLength">Length (cm):</label>
+          <input type="number" id="tableLength" min="60" max="300" value="180">
+        </div>
+        <div class="modal-field">
+          <label for="chairsOnWidth">Chairs on Width Side:</label>
+          <input type="number" id="chairsOnWidth" min="0" max="10" value="1">
+        </div>
+        <div class="modal-field">
+          <label for="chairsOnLength">Chairs on Length Side:</label>
+          <input type="number" id="chairsOnLength" min="0" max="10" value="2">
+        </div>
+      </div>
+
+      <div id="roundFields" style="display: none;">
+        <div class="modal-field">
+          <label for="tableDiameter">Diameter (cm):</label>
+          <input type="number" id="tableDiameter" min="60" max="300" value="120">
+        </div>
+        <div class="modal-field">
+          <label for="chairCount">Number of Chairs:</label>
+          <input type="number" id="chairCount" min="0" max="12" value="6">
+        </div>
+      </div>
+
+      <div class="modal-field">
+        <label for="tableNumber">Table Number:</label>
+        <input type="number" id="tableNumber" min="1" value="1">
+      </div>
+
+      <div class="modal-buttons">
+        <button id="cancelTable" class="button delete-button">Cancel</button>
+        <button id="createTable" class="button">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Global variables
+    let tables = [];
+    let nextTableId = 1;
+    let draggedItemType = null;
+    let draggedChair = null;
+    let draggedTable = null;
+    let dragOffsetX = 0;
+    let dragOffsetY = 0;
+    let people = [];
+    let draggedSourceTag = null;   // the <div class="name‑item"> we’re dragging
+    let selectedPersonName = null;   // convenience string copy of its text
+
+
+    // DOM elements
+    const floorPlan = document.querySelector('.floor-plan-container');
+    const tablePresets = document.querySelectorAll('.preset');
+    const namesList = document.getElementById('namesList');
+    const saveNamesBtn = document.getElementById('saveNames');
+    const namesDisplay = document.getElementById('namesDisplay');
+    const clearAllBtn = document.getElementById('clearAll');
+    const tableModal = document.getElementById('tableModal');
+    const createTableBtn = document.getElementById('createTable');
+    const cancelTableBtn = document.getElementById('cancelTable');
+    const rectangularFields = document.getElementById('rectangularFields');
+    const roundFields = document.getElementById('roundFields');
+    const statusBar = document.querySelector('.status-bar');
+
+    // Event listeners
+    document.addEventListener('DOMContentLoaded', () => {
+      initializeEventListeners();
+    });
+
+    function initializeEventListeners() {
+      // Table preset drag
+      tablePresets.forEach(preset => {
+        preset.addEventListener('dragstart', handlePresetDragStart);
+        preset.setAttribute('draggable', 'true');
+      });
+
+      // Floor plan drop area
+      floorPlan.addEventListener('dragover', handleDragOver);
+      floorPlan.addEventListener('drop', handleDrop);
+
+      // Save names button
+      saveNamesBtn.addEventListener('click', saveNames);
+
+      // Table modal buttons
+      createTableBtn.addEventListener('click', createTableFromModal);
+      cancelTableBtn.addEventListener('click', closeTableModal);
+
+      // Clear all button
+      clearAllBtn.addEventListener('click', clearFloorPlan);
+
+      // Mouse events for floor plan
+      floorPlan.addEventListener('mousedown', handleFloorPlanMouseDown);
+      document.addEventListener('mousemove', handleDocumentMouseMove);
+      document.addEventListener('mouseup', handleDocumentMouseUp);
+    }
+
+    // Drag and drop handlers
+    function handlePresetDragStart(e) {
+      draggedItemType = e.target.getAttribute('data-type');
+      e.dataTransfer.setData('text/plain', draggedItemType);
+      e.dataTransfer.effectAllowed = 'copyMove';
+    }
+
+    function handleDragOver(e) {
+      e.preventDefault();                       // ① allow the drop
+
+      // ② choose a dropEffect that the source actually allows
+      const allowed = e.dataTransfer.effectAllowed;   // "copy", "move", "copyMove", …
+
+      if (allowed.includes('move')) {
+        e.dataTransfer.dropEffect = 'move';
+      } else {
+        e.dataTransfer.dropEffect = 'copy';     // fallback for presets
+      }
+    }
+
+
+    function handleDrop(e) {
+      e.preventDefault();
+
+      console.log('handleDrop', e);
+
+      const payload = e.dataTransfer.getData('text/plain')   // guest or preset
+        || e.dataTransfer.getData('text/person');
+
+      console.log('payload', payload);
+
+      // ── 1. A table preset was dropped ──────────────────────
+      if (payload === 'rectangular' || payload === 'round') {
+        showTableModal(payload, e.clientX, e.clientY);
+        return;
+      }
+
+      console.log('payload', payload);
+
+      // ── 2. Otherwise we assume it’s a guest tag ────────────
+      const name = payload;                       // plain text = guest name
+      if (!name) return;                          // nothing useful – bail out
+
+      const chair = findChairAtPosition(e.clientX, e.clientY);
+      if (!chair) { updateStatus('Drop on a chair, please'); return; }
+
+      // If the chair is occupied → return that guest to the list
+      if (chair.classList.contains('occupied')) moveOccupantBackToList(chair);
+
+      /* ---- tidy old location of the dragged tag ----------------------- */
+      if (draggedSourceTag) {
+        const from = draggedSourceTag.parentElement;
+        if (from.classList.contains('chair')) {           // moved chair→chair
+          from.classList.remove('occupied');
+          from.innerHTML = '';
+        } else if (from === namesDisplay) {               // moved list→chair
+          draggedSourceTag.remove();                      // (remove from list)
+        }
+      }
+
+      /* ---- seat the guest -------------------------------------------- */
+      chair.appendChild(draggedSourceTag || createPersonTag(name));
+      chair.classList.add('occupied');
+
+      draggedSourceTag = null;
+      selectedPersonName = null;
+      updateStatus(`Assigned ${name} to a seat`);
+    }
+
+    /* -----------------------------------------------------------------
+    * Helper: build <div class="name-item">… that is draggable
+    * -----------------------------------------------------------------*/
+    let draggedFromChair = null;          // remembers the source chair (if any)
+
+    function createPersonTag(name) {
+      const tag = document.createElement('div');
+      tag.className = 'name-item';
+      tag.textContent = name;
+      tag.setAttribute('draggable', 'true');
+
+      tag.addEventListener('dragstart', e => {
+        draggedSourceTag = tag;             // remember the exact element
+        selectedPersonName = name;
+        e.dataTransfer.setData('text/plain', name);
+        e.dataTransfer.setData('text/person', name);
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.dropEffect = 'move';
+      });
+
+      tag.addEventListener('dragend', () => {
+        // drag cancelled → nothing to do, but reset globals
+        draggedSourceTag = null;
+        selectedPersonName = null;
+      });
+
+      return tag;
+    }
+
+    // Mouse interaction handlers
+    function handleFloorPlanMouseDown(e) {
+
+      // ------------------ drag a table (unchanged) ------------------
+      if (e.target.classList.contains('table')) {
+        draggedTable = e.target;
+        const rect = draggedTable.getBoundingClientRect();
+        dragOffsetX = e.clientX - rect.left;
+        dragOffsetY = e.clientY - rect.top;
+        draggedTable.style.zIndex = '50';
+        e.preventDefault();
+        return;
+      }
+
+      // ------------------ click a chair to clear it -----------------
+      const chair = e.target.closest('.chair');
+      if (chair && chair.classList.contains('occupied')) {
+        moveOccupantBackToList(chair);
+        updateStatus('Chair cleared');
+        e.preventDefault();
+      }
+    }
+
+    function handleDocumentMouseMove(e) {
+      if (draggedTable) {
+        // Move table
+        const x = e.clientX - dragOffsetX;
+        const y = e.clientY - dragOffsetY;
+
+        // Get floor plan bounds
+        const floorPlanRect = floorPlan.getBoundingClientRect();
+
+        // Position table with constraints
+        draggedTable.style.left = Math.max(0, Math.min(floorPlanRect.width - draggedTable.offsetWidth, x - floorPlanRect.left)) + 'px';
+        draggedTable.style.top = Math.max(0, Math.min(floorPlanRect.height - draggedTable.offsetHeight, y - floorPlanRect.top)) + 'px';
+
+        // Update chairs positions
+        updateChairPositions(draggedTable);
+      }
+    }
+
+    function handleDocumentMouseUp(e) {
+      if (draggedTable) {
+        // End table drag
+        draggedTable.style.zIndex = '';
+        draggedTable = null;
+      }
+
+      // Clear any highlighted chairs
+      document.querySelectorAll('.chair.highlight').forEach(chair => {
+        chair.classList.remove('highlight');
+      });
+    }
+
+    // Table creation
+    function showTableModal(type, x, y) {
+      // Store position for later table creation
+      tableModal.dataset.posX = x;
+      tableModal.dataset.posY = y;
+      tableModal.dataset.type = type;
+
+      // Show appropriate fields
+      if (type === 'rectangular') {
+        rectangularFields.style.display = 'block';
+        roundFields.style.display = 'none';
+      } else {
+        rectangularFields.style.display = 'none';
+        roundFields.style.display = 'block';
+      }
+
+      // Set default table number
+      document.getElementById('tableNumber').value = nextTableId;
+
+      // Show modal
+      tableModal.style.display = 'block';
+    }
+
+    function closeTableModal() {
+      tableModal.style.display = 'none';
+    }
+
+    function createTableFromModal() {
+      const type = tableModal.dataset.type;
+      const posX = parseInt(tableModal.dataset.posX);
+      const posY = parseInt(tableModal.dataset.posY);
+
+      let tableConfig = {
+        id: nextTableId,
+        type: type,
+        tableNumber: parseInt(document.getElementById('tableNumber').value)
+      };
+
+      if (type === 'rectangular') {
+        tableConfig.width = parseInt(document.getElementById('tableWidth').value);
+        tableConfig.length = parseInt(document.getElementById('tableLength').value);
+        tableConfig.chairsOnWidth = parseInt(document.getElementById('chairsOnWidth').value);
+        tableConfig.chairsOnLength = parseInt(document.getElementById('chairsOnLength').value);
+      } else {
+        tableConfig.diameter = parseInt(document.getElementById('tableDiameter').value);
+        tableConfig.chairCount = parseInt(document.getElementById('chairCount').value);
+      }
+
+      createTable(tableConfig, posX, posY);
+      closeTableModal();
+
+      // Increment table ID for next table
+      nextTableId++;
+    }
+
+    function createTable(config, posX, posY) {
+      const table = document.createElement('div');
+      table.className = `table ${config.type}`;
+      table.dataset.id = config.id;
+      table.dataset.type = config.type;
+
+      // Calculate table size (pixels)
+      const scaleFactor = 0.5; // cm to pixels scaling
+
+      if (config.type === 'rectangular') {
+        const width = config.width * scaleFactor;
+        const length = config.length * scaleFactor;
+
+        table.style.width = width + 'px';
+        table.style.height = length + 'px';
+
+        // Add table number label
+        const label = document.createElement('div');
+        label.textContent = `Table ${config.tableNumber}`;
+        table.appendChild(label);
+
+        // Calculate position (center on cursor)
+        const floorPlanRect = floorPlan.getBoundingClientRect();
+        table.style.left = (posX - floorPlanRect.left - width / 2) + 'px';
+        table.style.top = (posY - floorPlanRect.top - length / 2) + 'px';
+
+        // Create chairs
+        createChairsForRectangularTable(table, config);
+      } else {
+        const diameter = config.diameter * scaleFactor;
+
+        table.style.width = diameter + 'px';
+        table.style.height = diameter + 'px';
+
+        // Add table number label
+        const label = document.createElement('div');
+        label.textContent = `Table ${config.tableNumber}`;
+        table.appendChild(label);
+
+        // Calculate position (center on cursor)
+        const floorPlanRect = floorPlan.getBoundingClientRect();
+        table.style.left = (posX - floorPlanRect.left - diameter / 2) + 'px';
+        table.style.top = (posY - floorPlanRect.top - diameter / 2) + 'px';
+
+        // Create chairs
+        createChairsForRoundTable(table, config);
+      }
+
+      // Add to floor plan
+      floorPlan.appendChild(table);
+
+      // Add to tables array
+      tables.push({
+        element: table,
+        config: config
+      });
+
+      updateStatus(`Created ${config.type} table (Table ${config.tableNumber})`);
+    }
+
+    function createChairsForRectangularTable(table, config) {
+      const chairSize = 20; // pixels
+      const chairOffset = 15; // distance from table edge
+
+      // Get table dimensions
+      const width = parseInt(table.style.width);
+      const height = parseInt(table.style.height);
+
+      // Add chairs on width sides
+      for (let i = 0; i < config.chairsOnWidth; i++) {
+        // Top side
+        if (config.chairsOnWidth > 0) {
+          const spacing = width / (config.chairsOnWidth + 1);
+          const chair = createChair();
+          chair.style.left = ((i + 1) * spacing - chairSize / 2) + 'px';
+          chair.style.top = (-chairOffset - chairSize / 2) + 'px';
+          table.appendChild(chair);
+        }
+
+        // Bottom side
+        if (config.chairsOnWidth > 0) {
+          const spacing = width / (config.chairsOnWidth + 1);
+          const chair = createChair();
+          chair.style.left = ((i + 1) * spacing - chairSize / 2) + 'px';
+          chair.style.top = (height + chairOffset - chairSize / 2) + 'px';
+          table.appendChild(chair);
+        }
+      }
+
+      // Add chairs on length sides
+      for (let i = 0; i < config.chairsOnLength; i++) {
+        // Left side
+        if (config.chairsOnLength > 0) {
+          const spacing = height / (config.chairsOnLength + 1);
+          const chair = createChair();
+          chair.style.left = (-chairOffset - chairSize / 2) + 'px';
+          chair.style.top = ((i + 1) * spacing - chairSize / 2) + 'px';
+          table.appendChild(chair);
+        }
+
+        // Right side
+        if (config.chairsOnLength > 0) {
+          const spacing = height / (config.chairsOnLength + 1);
+          const chair = createChair();
+          chair.style.left = (width + chairOffset - chairSize / 2) + 'px';
+          chair.style.top = ((i + 1) * spacing - chairSize / 2) + 'px';
+          table.appendChild(chair);
+        }
+      }
+    }
+
+    function createChairsForRoundTable(table, config) {
+      const chairSize = 20; // pixels
+      const diameter = parseInt(table.style.width);
+      const radius = diameter / 2;
+      const chairOffset = 15; // distance from table edge
+
+      // Create chairs around the circle
+      for (let i = 0; i < config.chairCount; i++) {
+        const angle = (i * 2 * Math.PI) / config.chairCount;
+        const chair = createChair();
+
+        // Calculate position
+        const totalRadius = radius + chairOffset;
+        const x = totalRadius * Math.cos(angle) + radius - chairSize / 2;
+        const y = totalRadius * Math.sin(angle) + radius - chairSize / 2;
+
+        chair.style.left = x + 'px';
+        chair.style.top = y + 'px';
+        table.appendChild(chair);
+      }
+    }
+
+    /* -----------------------------------------------------------------
+    * Build a seat (<div class="chair">).  Each seat is a drop target.
+    * -----------------------------------------------------------------*/
+    function createChair() {
+      const chair = document.createElement('div');
+      chair.className = 'chair';
+      return chair;
+    }
+
+
+    function moveOccupantBackToList(chair) {
+      const occupant = chair.querySelector('.name-item');
+      if (occupant) {
+        namesDisplay.appendChild(occupant);    // move, don’t clone
+      }
+      chair.innerHTML = '';
+      chair.classList.remove('occupied');
+    }
+
+
+    function updateChairPositions(table) {
+      // The chairs are child elements of the table, so they move with it
+    }
+
+    // Person management
+    function saveNames() {
+      const namesText = namesList.value;
+      // Split by newlines and filter empty lines and trim whitespace
+      people = namesText.split('\n')
+        .map(name => name.trim())
+        .filter(name => name !== '');
+
+      // Update the names display
+      updateNamesDisplay();
+
+      // Normalize the textarea content
+      namesList.value = people.join('\n');
+
+      updateStatus(`Saved ${people.length} people`);
+    }
+
+    function updateNamesDisplay() {
+      namesDisplay.innerHTML = '';
+      people.forEach(name => namesDisplay.appendChild(createPersonTag(name)));
+    }
+
+    function findChairAtPosition(x, y) {
+      let best = null, bestDist = Infinity;
+
+      document.querySelectorAll('.chair').forEach(chair => {
+        const r = chair.getBoundingClientRect();
+        const cx = r.left + r.width / 2;    // chair centre
+        const cy = r.top + r.height / 2;
+        const d = Math.hypot(cx - x, cy - y);
+
+        if (d < 40 && d < bestDist) {        // 40‑px snap radius
+          bestDist = d;
+          console.log('bestDist', bestDist);
+          best = chair;
+        }
+      });
+
+      return best;                           // null if none is close enough
+    }
+
+
+    function assignPersonToChair(name, chair) {
+      // wipe any previous occupant
+      chair.innerHTML = '';
+      chair.classList.add('occupied');
+
+      // Drop a fresh tag inside the chair (it stays draggable)
+      const tag = createPersonTag(name);
+      tag.style.cursor = 'grab';
+      // Prevent the small tag from eating pointer events meant for the chair
+      chair.appendChild(tag);
+
+      updateStatus(`Assigned ${name} to a seat`);
+    }
+
+    // Utilities
+    function clearFloorPlan() {
+      if (confirm('Are you sure you want to clear the floor plan?')) {
+        // Remove all tables
+        tables.forEach(table => {
+          table.element.remove();
+        });
+        tables = [];
+        updateStatus('Floor plan cleared');
+      }
+    }
+
+    function updateStatus(message) {
+      statusBar.textContent = message;
+    }
+  </script>
+</body>
+
+</html>
