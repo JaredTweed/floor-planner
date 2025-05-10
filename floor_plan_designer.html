@@ -387,7 +387,7 @@
     let people = [];
     let draggedSourceTag = null;   // the <div class="name‑item"> we’re dragging
     let selectedPersonName = null;   // convenience string copy of its text
-    const snapDistance = 20;      // pixels
+    const snapDistance = 40;      // pixels
     let previewClone = null;
     let lastPreviewChair = null;
     let draggedFromChair = null;
@@ -422,6 +422,7 @@
     const rectangularFields = document.getElementById('rectangularFields');
     const roundFields = document.getElementById('roundFields');
     const statusBar = document.querySelector('.status-bar');
+    const sidebar = document.querySelector('.sidebar');
 
     // Event listeners
     document.addEventListener('DOMContentLoaded', () => {
@@ -457,23 +458,33 @@
       document.addEventListener('mouseup', handleDocumentMouseUp);
 
       // ─── allow dragging people back into the list ───
-      namesDisplay.addEventListener('dragover', e => {
-        if (draggedSourceTag) e.preventDefault();
+      [namesDisplay, sidebar].forEach(el => {
+        el.addEventListener('dragover', e => {
+          if (draggedSourceTag) e.preventDefault();      // show valid cursor
+        });
+
+        el.addEventListener('drop', e => {
+          e.preventDefault();
+          dropNameIntoList();                            // do the move
+        });
       });
-      namesDisplay.addEventListener('drop', e => {
-        e.preventDefault();
+
+      function dropNameIntoList() {
         if (!draggedSourceTag) return;
-        // remove from old chair
+
+        // if the tag came from a chair, empty that chair first
         if (draggedFromChair) {
           draggedFromChair.classList.remove('occupied');
           draggedFromChair.innerHTML = '';
         }
-        // move into list
+
         namesDisplay.appendChild(draggedSourceTag);
         updateClearButton();
         dragDidDrop = true;
         draggedSourceTag = null;
-      });
+        draggedFromChair = null;
+      }
+
 
       // show/hide the proper fields in the preset modal
       document.getElementById('presetType').addEventListener('change', e => {
@@ -534,12 +545,29 @@
 
       // right-click anywhere on the floor-plan ----------------------------------
       floorPlan.addEventListener('contextmenu', e => {
-        const target = e.target.closest('.table, .chair.loose');
-        if (!target) return;        // clicked somewhere else
+        // find the nearest chair or table they clicked
+        const chair = e.target.closest('.chair');
+        const table = e.target.closest('.table');
+        const loose  = e.target.closest('.chair.loose');
 
-        e.preventDefault();         // block the browser menu
-        tryDeleteElement(target);
+        // 1) if it’s an attached chair, clear it and stop
+        if (chair && !chair.classList.contains('loose')) {
+          e.preventDefault();
+          if (chair.classList.contains('occupied')) {
+            moveOccupantBackToList(chair);
+            updateStatus('Chair cleared');
+          }
+          return;
+        }
+
+        // 2) otherwise if it’s a loose chair or a whole table, try delete
+        const target = loose || table;
+        if (target) {
+          e.preventDefault();
+          tryDeleteElement(target);
+        }
       });
+
     }
 
     function renderPresets() {
@@ -778,33 +806,36 @@
       * 1.  Ctrl-click  → delete a table or a loose chair  (runs first)
       * ------------------------------------------------------------*/
       if (e.ctrlKey) {
+        const el = e.target;
         const target =
-              e.target.closest('.table') ||                    // any table
-            (e.target.classList.contains('chair') &&          // or a loose chair
-              e.target.parentElement === floorPlan ? e.target : null);
-
+            el.classList.contains('table')               ? el :
+            (el.classList.contains('chair') &&
+             el.classList.contains('loose'))             ? el : null;
+      
         if (target) {
           tryDeleteElement(target);
-          e.preventDefault();   // block drag / selection etc.
-          return;               // stop processing this mouse-down
+          e.preventDefault();     // stop drag / selection, etc.
+          return;                 // nothing else for this click
         }
       }
 
       /* -------------------------------------------------------------
-      * 2.  (unchanged) start dragging a table
+      * 2.  start dragging a table
       * ------------------------------------------------------------*/
-      if (e.target.classList.contains('table')) {
-        draggedTable = e.target;
-        const rect = draggedTable.getBoundingClientRect();
+      const tableEl   = e.target.closest('.table');
+      const clickedChair = e.target.closest('.chair');
+      if (tableEl && !clickedChair) {
+        draggedTable = tableEl;
+        const rect = tableEl.getBoundingClientRect();
         dragOffsetX = e.clientX - rect.left;
         dragOffsetY = e.clientY - rect.top;
-        draggedTable.style.zIndex = '50';
+        tableEl.style.zIndex = '50';
         e.preventDefault();
         return;
       }
 
       /* -------------------------------------------------------------
-      * 3.  (unchanged) start dragging a loose empty chair
+      * 3.  start dragging a loose empty chair
       * ------------------------------------------------------------*/
       if (e.target.classList.contains('chair') &&
           !e.target.classList.contains('occupied') &&
@@ -972,6 +1003,7 @@
         const label = document.createElement('div');
         label.textContent = `${config.tableNumber}`;
         label.classList.add('table-label');
+        label.style.pointerEvents = 'none'; 
         table.appendChild(label);
 
         // Calculate position (center on cursor)
