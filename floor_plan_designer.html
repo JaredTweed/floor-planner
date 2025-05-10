@@ -138,6 +138,13 @@
       background-color: #e74c3c;
     }
 
+    .topbar-button {
+      background-color: white;
+      color: #2c3e50;
+      margin-top: 0;
+      align-self: center;
+    }
+
     .table {
       position: absolute;
       background-color: #fff;
@@ -152,6 +159,7 @@
     .table.rectangular {
       display: flex;
       flex-direction: column;
+      border-radius: 8px;
     }
 
     .table.round {
@@ -168,7 +176,7 @@
     }
 
     .chair.occupied, .chair.chair.occupied > .name-item {
-      cursor: pointer !important;
+      cursor: grab !important;
     }
 
     .chair {
@@ -180,29 +188,38 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 10px;
+      
       color: white;
       overflow: visible;
       text-overflow: ellipsis;
       white-space: nowrap;
       z-index: 10;
+      box-shadow: inset 0 0 2px #2c3e50;
     }
 
     .chair.occupied {
-      background-color: #e74c3c;
-      cursor: pointer;
+      background-color: #3498db;
+      box-shadow: none;
+      cursor: grab;
     }
 
     .chair .name-item {
       position: absolute;
-      top: -1.2em;           /* tweak to taste */
+      top: 50%;           /* tweak to taste */
       left: 50%;
-      transform: translateX(-50%);
+      font-size: 12px;
+      padding: 2px;
+
+      transform: translate(-50%, -50%);
       white-space: nowrap;   /* prevent wrapping */
       z-index: 20;           /* above the chair */
     }
     .chair.highlight {
       outline: 2px dashed #2ecc71;
+    }
+    .chair.loose:not(.occupied) {
+      cursor: grab;          /* hand cursor on hover                                     */
+      z-index: 30;           /* above any .name-item (those sit at z-index 20)           */
     }
     .name-item.preview {
       opacity: 0.5;
@@ -283,6 +300,7 @@
       <div class="preset" data-type="rectangular">Rectangular Table</div>
       <div class="preset" data-type="round">Round Table</div>
     </div>
+    <button id="addPresetBtn" class="button topbar-button">Add Table</button>
   </div>
 
   <div class="main-container">
@@ -315,50 +333,47 @@
 
   <div class="status-bar">Ready</div>
 
-  <!-- Modal for table configuration -->
-  <div id="tableModal" class="modal">
+  <!-- Table preset-creation modal -->
+  <div id="presetModal" class="modal">
     <div class="modal-content">
-      <div id="rectangularFields">
-        <div class="modal-field">
-          <label for="tableWidth">Width (cm):</label>
-          <input type="number" id="tableWidth" min="60" max="300" value="120">
-        </div>
-        <div class="modal-field">
-          <label for="tableLength">Length (cm):</label>
-          <input type="number" id="tableLength" min="60" max="300" value="180">
-        </div>
-        <div class="modal-field">
-          <label for="chairsOnWidth">Chairs on Width Side:</label>
-          <input type="number" id="chairsOnWidth" min="0" max="10" value="1">
-        </div>
-        <div class="modal-field">
-          <label for="chairsOnLength">Chairs on Length Side:</label>
-          <input type="number" id="chairsOnLength" min="0" max="10" value="2">
-        </div>
-      </div>
-
-      <div id="roundFields" style="display: none;">
-        <div class="modal-field">
-          <label for="tableDiameter">Diameter (cm):</label>
-          <input type="number" id="tableDiameter" min="60" max="300" value="120">
-        </div>
-        <div class="modal-field">
-          <label for="chairCount">Number of Chairs:</label>
-          <input type="number" id="chairCount" min="0" max="12" value="6">
-        </div>
-      </div>
-
+      <h3>Create Table Preset</h3>
       <div class="modal-field">
-        <label for="tableNumber">Table Number:</label>
-        <input type="number" id="tableNumber" min="1" value="1">
+        <label for="presetName">Preset Name:</label>
+        <input type="text" id="presetName" placeholder="e.g. 'Large Round'">
+      </div>
+      <div class="modal-field">
+        <label for="presetType">Type:</label>
+        <select id="presetType">
+          <option value="rectangular">Rectangular</option>
+          <option value="round">Round</option>
+        </select>
+      </div>
+
+      <!-- reuse your existing dimension fields, wrapped for preset use -->
+      <div id="presetRectFields" class="modal-field">
+        <label>Width (cm):</label>
+        <input type="number" id="presetWidth" min="60" max="300" value="120">
+        <label>Length (cm):</label>
+        <input type="number" id="presetLength" min="60" max="300" value="220">
+        <label>Chairs on Width:</label>
+        <input type="number" id="presetChairsOnWidth" min="0" max="10" value="0">
+        <label>Chairs on Length:</label>
+        <input type="number" id="presetChairsOnLength" min="0" max="10" value="4">
+      </div>
+      <div id="presetRoundFields" class="modal-field" style="display:none">
+        <label>Diameter (cm):</label>
+        <input type="number" id="presetDiameter" min="60" max="300" value="120">
+        <label>Number of Chairs:</label>
+        <input type="number" id="presetChairCount" min="0" max="12" value="6">
       </div>
 
       <div class="modal-buttons">
-        <button id="cancelTable" class="button delete-button">Cancel</button>
-        <button id="createTable" class="button">Create</button>
+        <button id="cancelPreset" class="button delete-button">Cancel</button>
+        <button id="createPreset" class="button">Save Preset</button>
       </div>
     </div>
   </div>
+
 
   <script>
     // Global variables
@@ -377,9 +392,24 @@
     let lastPreviewChair = null;
     let draggedFromChair = null;
     let dragDidDrop = false;
+    let draggedStandaloneChair = null;
+    let presets = [
+      {           // the fixed chair preset
+        name: 'Empty Chair',
+        type: 'chair',          // a special type we’ll handle below
+        nonRemovable: true      // flag so we can block deleting
+      },
+
+      // the two table presets you already had
+      { name: 'Rectangular Table', type: 'rectangular',
+        config: { width:120, length:220, chairsOnWidth:0, chairsOnLength:4 } },
+      { name: 'Round Table',       type: 'round',
+        config: { diameter:120, chairCount:6 } }
+    ];
 
 
     // DOM elements
+    const presetsContainer = document.querySelector('.table-presets');
     const floorPlan = document.querySelector('.floor-plan-container');
     const tablePresets = document.querySelectorAll('.preset');
     const namesList = document.getElementById('namesList');
@@ -396,6 +426,7 @@
     // Event listeners
     document.addEventListener('DOMContentLoaded', () => {
       initializeEventListeners();
+      renderPresets();
     });
 
     function initializeEventListeners() {
@@ -413,8 +444,8 @@
       saveNamesBtn.addEventListener('click', saveNames);
 
       // Table modal buttons
-      createTableBtn.addEventListener('click', createTableFromModal);
-      cancelTableBtn.addEventListener('click', closeTableModal);
+      if (createTableBtn)  createTableBtn.addEventListener('click', createTableFromModal);
+      if (cancelTableBtn)  cancelTableBtn.addEventListener('click', closeTableModal);
 
       // Clear all button
       clearAllBtn.addEventListener('click', clearAction);
@@ -443,7 +474,120 @@
         dragDidDrop = true;
         draggedSourceTag = null;
       });
+
+      // show/hide the proper fields in the preset modal
+      document.getElementById('presetType').addEventListener('change', e => {
+        if (e.target.value === 'rectangular') {
+          document.getElementById('presetRectFields').style.display = 'block';
+          document.getElementById('presetRoundFields').style.display = 'none';
+        } else {
+          document.getElementById('presetRectFields').style.display = 'none';
+          document.getElementById('presetRoundFields').style.display = 'block';
+        }
+      });
+
+      // Open the preset modal
+      document.getElementById('addPresetBtn').addEventListener('click', () => {
+        document.getElementById('presetModal').style.display = 'block';
+      });
+
+      // Cancel
+      document.getElementById('cancelPreset').addEventListener('click', () => {
+        document.getElementById('presetModal').style.display = 'none';
+      });
+
+      // Open the preset modal when you click "Add Table"
+      document.getElementById('addPresetBtn').addEventListener('click', () => {
+        document.getElementById('presetModal').style.display = 'block';
+      });
+
+      // Cancel button inside the preset modal
+      document.getElementById('cancelPreset').addEventListener('click', () => {
+        document.getElementById('presetModal').style.display = 'none';
+      });
+
+      // Save the new preset
+      document.getElementById('createPreset').addEventListener('click', () => {
+        const name = document.getElementById('presetName').value.trim();
+        const type = document.getElementById('presetType').value;
+        if (!name) return alert('Please give your preset a name.');
+
+        let config;
+        if (type === 'rectangular') {
+          config = {
+            width: +document.getElementById('presetWidth').value,
+            length: +document.getElementById('presetLength').value,
+            chairsOnWidth: +document.getElementById('presetChairsOnWidth').value,
+            chairsOnLength: +document.getElementById('presetChairsOnLength').value
+          };
+        } else {
+          config = {
+            diameter: +document.getElementById('presetDiameter').value,
+            chairCount: +document.getElementById('presetChairCount').value
+          };
+        }
+
+        presets.push({ name, type, config });
+        renderPresets();
+        document.getElementById('presetModal').style.display = 'none';
+      });
+
+      // right-click anywhere on the floor-plan ----------------------------------
+      floorPlan.addEventListener('contextmenu', e => {
+        const target = e.target.closest('.table, .chair.loose');
+        if (!target) return;        // clicked somewhere else
+
+        e.preventDefault();         // block the browser menu
+        tryDeleteElement(target);
+      });
     }
+
+    function renderPresets() {
+      presetsContainer.innerHTML = '';
+      presets.forEach((p, i) => {
+        const btn = document.createElement('div');
+        btn.className = 'preset';
+        btn.textContent = p.name;
+        btn.draggable = true;
+        btn.dataset.index = i;
+
+        // normal dragstart: carry the config
+        btn.addEventListener('dragstart', e => {
+          if (p.type === 'chair') {
+            e.dataTransfer.setData('text/plain', 'chair');        // simple flag
+          } else {
+            e.dataTransfer.setData('application/json',
+                                  JSON.stringify(p.config));     // table data
+          }
+          draggedItemType = p.type;
+          e.dataTransfer.effectAllowed = 'copyMove';
+        });
+
+        // right-click / ctrl+click to remove
+        if (!p.nonRemovable) {
+          btn.addEventListener('contextmenu', e => {
+            e.preventDefault();
+            if (confirm(`Delete preset "${p.name}"?`)) {
+              presets.splice(i, 1);
+              renderPresets();
+            }
+          });
+
+          btn.addEventListener('click', e => {
+            if (e.ctrlKey) {
+              e.preventDefault();
+              if (confirm(`Delete preset "${p.name}"?`)) {
+                presets.splice(i, 1);
+                renderPresets();
+              }
+            }
+          });
+        }
+
+        presetsContainer.appendChild(btn);
+      });
+    }
+
 
     // Drag and drop handlers
     function handlePresetDragStart(e) {
@@ -546,11 +690,43 @@
         return;
       }
 
-      // —— 2) otherwise it’s a table preset —— 
-      const payload = e.dataTransfer.getData('text/plain');
-      if (payload === 'rectangular' || payload === 'round') {
-        showTableModal(payload, e.clientX, e.clientY);
+      // 2-A)  single empty chair dropped from the preset bar ------------
+      if (e.dataTransfer.getData('text/plain') === 'chair') {
+        const chair = createChair();
+        floorPlan.appendChild(chair);
+        makeLooseChairDraggable(chair);
+
+        // position it where the cursor is
+        const fpRect = floorPlan.getBoundingClientRect();
+        chair.style.left = (e.clientX - fpRect.left - 10) + 'px';   // 10 = half width
+        chair.style.top  = (e.clientY - fpRect.top  - 10) + 'px';
+
+        return;    // stop – nothing else to do
       }
+
+      // —— 2) otherwise it’s a table preset —— 
+      const cfgJson = e.dataTransfer.getData('application/json');
+      if (cfgJson) {
+        const cfg  = JSON.parse(cfgJson);              // the dimensions/chair data
+        const type = cfg.diameter ? 'round' : 'rectangular';
+
+        // Build the full table-config object expected by createTable()
+        const tableConfig = {
+          ...cfg,
+          type,            // “round” or “rectangular”
+          id:           nextTableId,
+          tableNumber:  nextTableId
+        };
+
+        createTable(tableConfig, e.clientX, e.clientY); // 🠒 instantly place table
+        nextTableId++;                                   // keep IDs unique
+        return;                                          // important – stop here
+      }
+    }
+
+    function makeLooseChairDraggable(chair) {
+      chair.classList.add('loose');   // enables the CSS you just added
+      chair.style.zIndex = '30';      // keeps it above labels even while dragging
     }
 
 
@@ -598,8 +774,25 @@
 
     // Mouse interaction handlers
     function handleFloorPlanMouseDown(e) {
+      /* -------------------------------------------------------------
+      * 1.  Ctrl-click  → delete a table or a loose chair  (runs first)
+      * ------------------------------------------------------------*/
+      if (e.ctrlKey) {
+        const target =
+              e.target.closest('.table') ||                    // any table
+            (e.target.classList.contains('chair') &&          // or a loose chair
+              e.target.parentElement === floorPlan ? e.target : null);
 
-      // ------------------ drag a table (unchanged) ------------------
+        if (target) {
+          tryDeleteElement(target);
+          e.preventDefault();   // block drag / selection etc.
+          return;               // stop processing this mouse-down
+        }
+      }
+
+      /* -------------------------------------------------------------
+      * 2.  (unchanged) start dragging a table
+      * ------------------------------------------------------------*/
       if (e.target.classList.contains('table')) {
         draggedTable = e.target;
         const rect = draggedTable.getBoundingClientRect();
@@ -610,7 +803,24 @@
         return;
       }
 
-      // ------------------ click a chair to clear it -----------------
+      /* -------------------------------------------------------------
+      * 3.  (unchanged) start dragging a loose empty chair
+      * ------------------------------------------------------------*/
+      if (e.target.classList.contains('chair') &&
+          !e.target.classList.contains('occupied') &&
+          e.target.parentElement === floorPlan) {
+        draggedStandaloneChair = e.target;
+        const r = draggedStandaloneChair.getBoundingClientRect();
+        dragOffsetX = e.clientX - r.left;
+        dragOffsetY = e.clientY - r.top;
+        draggedStandaloneChair.style.zIndex = '60';
+        e.preventDefault();
+        return;
+      }
+
+      /* -------------------------------------------------------------
+      * 4.  (unchanged) Ctrl-click on an *occupied* chair → clear it
+      * ------------------------------------------------------------*/
       const chair = e.target.closest('.chair');
       if (chair && chair.classList.contains('occupied') && e.ctrlKey) {
         moveOccupantBackToList(chair);
@@ -619,7 +829,21 @@
       }
     }
 
+
     function handleDocumentMouseMove(e) {
+      if (draggedStandaloneChair) {
+        const fpRect = floorPlan.getBoundingClientRect();
+        const x = e.clientX - dragOffsetX - fpRect.left;
+        const y = e.clientY - dragOffsetY - fpRect.top;
+
+        // keep inside the floor-plan viewport
+        draggedStandaloneChair.style.left =
+          Math.max(0, Math.min(fpRect.width  - 20, x)) + 'px';
+        draggedStandaloneChair.style.top  =
+          Math.max(0, Math.min(fpRect.height - 20, y)) + 'px';
+
+        return;               // don’t also run the table code
+      }
       if (draggedTable) {
         // Move table
         const x = e.clientX - dragOffsetX;
@@ -642,6 +866,11 @@
         // End table drag
         draggedTable.style.zIndex = '';
         draggedTable = null;
+      }
+    
+      if (draggedStandaloneChair) {
+        draggedStandaloneChair.style.zIndex = '';
+        draggedStandaloneChair = null;
       }
 
       // Clear any highlighted chairs
@@ -984,6 +1213,34 @@
         clearAllBtn.textContent = 'Clear Floor Plan';
       }
     }
+
+    /* ---------------------------------------------------------------
+    * Delete a table or loose-chair.  If it contains a <div.name-item>
+    * we ➊ ask for confirmation, then ➋ move those tags back to
+    * #namesDisplay so the names aren’t lost.
+    * --------------------------------------------------------------*/
+    function tryDeleteElement(el) {
+      // 1) does it have people on it?
+      const occupiedTags = el.querySelectorAll('.name-item');
+      if (occupiedTags.length &&
+          !confirm('This item has seated people – delete anyway?')) {
+        return;     // user backed out
+      }
+
+      // 2) move any occupants back to the list
+      occupiedTags.forEach(tag => namesDisplay.appendChild(tag));
+
+      // 3) keep the tables[] array clean
+      if (el.classList.contains('table')) {
+        tables = tables.filter(t => t.element !== el);
+      }
+
+      // 4) remove from the DOM
+      el.remove();
+      updateClearButton();
+      updateStatus('Item deleted');
+    }
+
 
     function updateStatus(message) {
       statusBar.textContent = message;
