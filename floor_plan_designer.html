@@ -146,6 +146,7 @@
       align-items: center;
       justify-content: center;
       cursor: move;
+      user-select: none;
     }
 
     .table.rectangular {
@@ -155,6 +156,19 @@
 
     .table.round {
       border-radius: 50%;
+    }
+
+    .table > .table-label {
+      user-select: none;
+      pointer-events: none;
+    }
+
+    .table > .chair {
+      cursor: default;
+    }
+
+    .chair.occupied, .chair.chair.occupied > .name-item {
+      cursor: pointer !important;
     }
 
     .chair {
@@ -168,7 +182,7 @@
       justify-content: center;
       font-size: 10px;
       color: white;
-      overflow: hidden;
+      overflow: visible;
       text-overflow: ellipsis;
       white-space: nowrap;
       z-index: 10;
@@ -176,7 +190,25 @@
 
     .chair.occupied {
       background-color: #e74c3c;
+      cursor: pointer;
     }
+
+    .chair .name-item {
+      position: absolute;
+      top: -1.2em;           /* tweak to taste */
+      left: 50%;
+      transform: translateX(-50%);
+      white-space: nowrap;   /* prevent wrapping */
+      z-index: 20;           /* above the chair */
+    }
+    .chair.highlight {
+      outline: 2px dashed #2ecc71;
+    }
+    .name-item.preview {
+      opacity: 0.5;
+      pointer-events: none;
+    }
+
 
     .modal {
       display: none;
@@ -340,6 +372,11 @@
     let people = [];
     let draggedSourceTag = null;   // the <div class="name‑item"> we’re dragging
     let selectedPersonName = null;   // convenience string copy of its text
+    const snapDistance = 20;      // pixels
+    let previewClone = null;
+    let lastPreviewChair = null;
+    let draggedFromChair = null;
+    let dragDidDrop = false;
 
 
     // DOM elements
@@ -387,6 +424,25 @@
       floorPlan.addEventListener('mousedown', handleFloorPlanMouseDown);
       document.addEventListener('mousemove', handleDocumentMouseMove);
       document.addEventListener('mouseup', handleDocumentMouseUp);
+
+      // ─── allow dragging people back into the list ───
+      namesDisplay.addEventListener('dragover', e => {
+        if (draggedSourceTag) e.preventDefault();
+      });
+      namesDisplay.addEventListener('drop', e => {
+        e.preventDefault();
+        if (!draggedSourceTag) return;
+        // remove from old chair
+        if (draggedFromChair) {
+          draggedFromChair.classList.remove('occupied');
+          draggedFromChair.innerHTML = '';
+        }
+        // move into list
+        namesDisplay.appendChild(draggedSourceTag);
+        updateClearButton();
+        dragDidDrop = true;
+        draggedSourceTag = null;
+      });
     }
 
     // Drag and drop handlers
@@ -397,73 +453,110 @@
     }
 
     function handleDragOver(e) {
-      e.preventDefault();                       // ① allow the drop
+      e.preventDefault();  // allow drop
 
-      // ② choose a dropEffect that the source actually allows
-      const allowed = e.dataTransfer.effectAllowed;   // "copy", "move", "copyMove", …
+      // Only do snap-preview if we're dragging a person
+      if (draggedSourceTag) {
+        const x = e.clientX, y = e.clientY;
+        // find nearest chair within snapDistance
+        let nearest = null, minD = snapDistance;
+        document.querySelectorAll('.chair').forEach(chair => {
+          const r = chair.getBoundingClientRect();
+          const cx = r.left + r.width/2, cy = r.top + r.height/2;
+          const d = Math.hypot(cx - x, cy - y);
+          if (d < minD) {
+            minD = d; nearest = chair;
+          }
+        });
 
-      if (allowed.includes('move')) {
+        // if we snapped to a new chair, update preview
+        if (nearest !== lastPreviewChair) {
+          // clear old
+          if (lastPreviewChair) {
+            lastPreviewChair.classList.remove('highlight');
+            if (previewClone) lastPreviewChair.removeChild(previewClone);
+          }
+          lastPreviewChair = nearest;
+
+          if (nearest) {
+            // clone and show
+            previewClone = draggedSourceTag.cloneNode(true);
+            previewClone.classList.add('preview');
+            nearest.appendChild(previewClone);
+            nearest.classList.add('highlight');
+          } else {
+            previewClone = null;
+          }
+        }
+
+        // show move cursor
         e.dataTransfer.dropEffect = 'move';
-      } else {
-        e.dataTransfer.dropEffect = 'copy';     // fallback for presets
+        return;
       }
+
+      // fallback: treat as table-drop
+      const allowed = e.dataTransfer.effectAllowed;
+      e.dataTransfer.dropEffect = allowed.includes('copy') ? 'copy' : 'copyMove';
     }
 
 
     function handleDrop(e) {
       e.preventDefault();
 
-      console.log('handleDrop', e);
+      // clear preview
+      if (lastPreviewChair) {
+        lastPreviewChair.classList.remove('highlight');
+        if (previewClone) lastPreviewChair.removeChild(previewClone);
+        previewClone = null;
+        lastPreviewChair = null;
+      }
 
-      const payload = e.dataTransfer.getData('text/plain')   // guest or preset
-        || e.dataTransfer.getData('text/person');
+      // —— 1) if we have a draggedSourceTag, it must be a person label ——
+      if (draggedSourceTag) {
+        const chair = findChairAtPosition(e.clientX, e.clientY);
+        if (!chair) {
+          updateStatus('Drop on a chair, please');
+          return;
+        }
 
-      console.log('payload', payload);
+        // if occupied, kick the old occupant out
+        if (chair.classList.contains('occupied')) {
+          moveOccupantBackToList(chair);
+        }
 
-      // ── 1. A table preset was dropped ──────────────────────
-      if (payload === 'rectangular' || payload === 'round') {
-        showTableModal(payload, e.clientX, e.clientY);
+        // tidy up its old seat/list
+        const from = draggedSourceTag.parentElement;
+        if (from.classList.contains('chair')) {
+          from.classList.remove('occupied');
+          from.innerHTML = '';
+        }
+        // if it was in the sidebar list, appendChild will remove it automatically
+
+        // **drop the real element** onto the chair
+        chair.appendChild(draggedSourceTag);
+        chair.classList.add('occupied');
+
+        dragDidDrop = true;
+
+        updateStatus(`Assigned ${draggedSourceTag.textContent} to a seat`);
+        updateClearButton();
+
+        // reset
+        draggedSourceTag = null;
         return;
       }
 
-      console.log('payload', payload);
-
-      // ── 2. Otherwise we assume it’s a guest tag ────────────
-      const name = payload;                       // plain text = guest name
-      if (!name) return;                          // nothing useful – bail out
-
-      const chair = findChairAtPosition(e.clientX, e.clientY);
-      if (!chair) { updateStatus('Drop on a chair, please'); return; }
-
-      // If the chair is occupied → return that guest to the list
-      if (chair.classList.contains('occupied')) moveOccupantBackToList(chair);
-
-      /* ---- tidy old location of the dragged tag ----------------------- */
-      if (draggedSourceTag) {
-        const from = draggedSourceTag.parentElement;
-        if (from.classList.contains('chair')) {           // moved chair→chair
-          from.classList.remove('occupied');
-          from.innerHTML = '';
-        } else if (from === namesDisplay) {               // moved list→chair
-          draggedSourceTag.remove();                      // (remove from list)
-        }
+      // —— 2) otherwise it’s a table preset —— 
+      const payload = e.dataTransfer.getData('text/plain');
+      if (payload === 'rectangular' || payload === 'round') {
+        showTableModal(payload, e.clientX, e.clientY);
       }
-
-      /* ---- seat the guest -------------------------------------------- */
-      chair.appendChild(draggedSourceTag || createPersonTag(name));
-      chair.classList.add('occupied');
-
-      draggedSourceTag = null;
-      selectedPersonName = null;
-      updateStatus(`Assigned ${name} to a seat`);
-      updateClearButton(); 
     }
+
 
     /* -----------------------------------------------------------------
     * Helper: build <div class="name-item">… that is draggable
     * -----------------------------------------------------------------*/
-    let draggedFromChair = null;          // remembers the source chair (if any)
-
     function createPersonTag(name) {
       const tag = document.createElement('div');
       tag.className = 'name-item';
@@ -471,18 +564,33 @@
       tag.setAttribute('draggable', 'true');
 
       tag.addEventListener('dragstart', e => {
-        draggedSourceTag = tag;             // remember the exact element
+        draggedSourceTag = tag;
+        // remember where we came from
+        const parent = tag.parentElement;
+        draggedFromChair = parent.classList.contains('chair') ? parent : null;
+        dragDidDrop = false;
+
         selectedPersonName = name;
         e.dataTransfer.setData('text/plain', name);
-        e.dataTransfer.setData('text/person', name);
         e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.dropEffect = 'move';
       });
 
       tag.addEventListener('dragend', () => {
-        // drag cancelled → nothing to do, but reset globals
+        // if we never dropped anywhere valid, snap back to original chair
+        if (!dragDidDrop && draggedFromChair) {
+          draggedFromChair.appendChild(tag);
+          draggedFromChair.classList.add('occupied');
+        }
+        // clean up
         draggedSourceTag = null;
-        selectedPersonName = null;
+        draggedFromChair = null;
+        dragDidDrop = false;
+      });
+
+      tag.addEventListener('click', e => {
+        if (e.ctrlKey && tag.parentElement.classList.contains('chair')) {
+          moveOccupantBackToList(tag.parentElement);
+        }
       });
 
       return tag;
@@ -504,7 +612,7 @@
 
       // ------------------ click a chair to clear it -----------------
       const chair = e.target.closest('.chair');
-      if (chair && chair.classList.contains('occupied')) {
+      if (chair && chair.classList.contains('occupied') && e.ctrlKey) {
         moveOccupantBackToList(chair);
         updateStatus('Chair cleared');
         e.preventDefault();
@@ -615,7 +723,7 @@
 
         // Add table number label
         const label = document.createElement('div');
-        label.textContent = `Table ${config.tableNumber}`;
+        label.textContent = `${config.tableNumber}`;
         table.appendChild(label);
 
         // Calculate position (center on cursor)
@@ -633,7 +741,8 @@
 
         // Add table number label
         const label = document.createElement('div');
-        label.textContent = `Table ${config.tableNumber}`;
+        label.textContent = `${config.tableNumber}`;
+        label.classList.add('table-label');
         table.appendChild(label);
 
         // Calculate position (center on cursor)
@@ -796,8 +905,6 @@
       updateClearButton();
     }
 
-
-
     function updateNamesDisplay() {
       namesDisplay.innerHTML = '';
       people.forEach(name => namesDisplay.appendChild(createPersonTag(name)));
@@ -808,19 +915,20 @@
 
       document.querySelectorAll('.chair').forEach(chair => {
         const r = chair.getBoundingClientRect();
-        const cx = r.left + r.width / 2;    // chair centre
+        const cx = r.left + r.width / 2;
         const cy = r.top + r.height / 2;
         const d = Math.hypot(cx - x, cy - y);
 
-        if (d < 40 && d < bestDist) {        // 40‑px snap radius
+        // use the same snapDistance as preview
+        if (d < snapDistance && d < bestDist) {
           bestDist = d;
-          console.log('bestDist', bestDist);
           best = chair;
         }
       });
 
-      return best;                           // null if none is close enough
+      return best;
     }
+
 
 
     function assignPersonToChair(name, chair) {
