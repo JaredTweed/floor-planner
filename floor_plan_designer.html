@@ -380,7 +380,8 @@
       cancelTableBtn.addEventListener('click', closeTableModal);
 
       // Clear all button
-      clearAllBtn.addEventListener('click', clearFloorPlan);
+      clearAllBtn.addEventListener('click', clearAction);
+      updateClearButton();
 
       // Mouse events for floor plan
       floorPlan.addEventListener('mousedown', handleFloorPlanMouseDown);
@@ -455,6 +456,7 @@
       draggedSourceTag = null;
       selectedPersonName = null;
       updateStatus(`Assigned ${name} to a seat`);
+      updateClearButton(); 
     }
 
     /* -----------------------------------------------------------------
@@ -745,6 +747,7 @@
       }
       chair.innerHTML = '';
       chair.classList.remove('occupied');
+      updateClearButton();
     }
 
 
@@ -754,20 +757,46 @@
 
     // Person management
     function saveNames() {
-      const namesText = namesList.value;
-      // Split by newlines and filter empty lines and trim whitespace
-      people = namesText.split('\n')
-        .map(name => name.trim())
-        .filter(name => name !== '');
+      // 1) parse the textarea into your new list
+      const newPeople = namesList.value
+        .split('\n')
+        .map(n => n.trim())
+        .filter(n => n);
 
-      // Update the names display
-      updateNamesDisplay();
+      // 2) eject any occupant whose name isn’t in newPeople
+      document.querySelectorAll('.chair.occupied').forEach(chair => {
+        const occupant = chair.querySelector('.name-item');
+        if (occupant && !newPeople.includes(occupant.textContent)) {
+          // move them back or just clear the chair:
+          namesDisplay.appendChild(occupant);
+          chair.innerHTML = '';
+          chair.classList.remove('occupied');
+        }
+      });
 
-      // Normalize the textarea content
+      // 3) commit the new people array
+      people = newPeople;
       namesList.value = people.join('\n');
 
+      // 4) rebuild the sidebar with only _unseated_ names
+      namesDisplay.innerHTML = '';
+      // collect the names already on chairs
+      const seated = new Set(
+        Array.from(document.querySelectorAll('.chair.occupied .name-item'))
+            .map(el => el.textContent)
+      );
+      // for every name in people, if they're not seated, show them in the list
+      people.forEach(name => {
+        if (!seated.has(name)) {
+          namesDisplay.appendChild(createPersonTag(name));
+        }
+      });
+
       updateStatus(`Saved ${people.length} people`);
+      updateClearButton();
     }
+
+
 
     function updateNamesDisplay() {
       namesDisplay.innerHTML = '';
@@ -817,6 +846,34 @@
         });
         tables = [];
         updateStatus('Floor plan cleared');
+      }
+    }
+
+    function clearAction() {
+      const occupiedChairs = document.querySelectorAll('.chair.occupied');
+      if (occupiedChairs.length > 0) {
+        // If anyone’s seated → empty only the seats
+        if (confirm('Remove everyone from their seats?')) {
+          occupiedChairs.forEach(moveOccupantBackToList);
+          updateStatus('All seats emptied');
+        }
+      } else {
+        // Otherwise → clear all tables
+        if (confirm('Are you sure you want to clear the floor plan?')) {
+          tables.forEach(t => t.element.remove());
+          tables = [];
+          updateStatus('Floor plan cleared');
+        }
+      }
+      updateClearButton();
+    }
+
+    function updateClearButton() {
+      const occupiedCount = document.querySelectorAll('.chair.occupied').length;
+      if (occupiedCount > 0) {
+        clearAllBtn.textContent = 'Empty Seats';
+      } else {
+        clearAllBtn.textContent = 'Clear Floor Plan';
       }
     }
 
