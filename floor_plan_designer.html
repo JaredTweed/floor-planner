@@ -1141,6 +1141,9 @@
       if (type === 'chair') {               // loose chair preset
         const c = createChair();
         c.style.cursor = 'default';
+        c.style.position = 'absolute';
+        c.style.top  = '-10000px';
+        c.style.left = '-10000px';
         return c;
       }
 
@@ -1150,6 +1153,9 @@
       g.style.position = 'absolute';
       g.style.pointerEvents = 'none';
       g.style.opacity = '0.8';              // translucent
+      g.style.position = 'absolute';
+      g.style.top  = '-10000px';
+      g.style.left = '-10000px';
 
       if (type === 'rectangular') {
         g.style.width  = (cfg.width  ?? 120) * scale + 'px';
