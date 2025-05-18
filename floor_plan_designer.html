@@ -590,14 +590,20 @@
         // normal dragstart: carry the config
         btn.addEventListener('dragstart', e => {
           if (p.type === 'chair') {
-            e.dataTransfer.setData('text/plain', 'chair');        // simple flag
+            e.dataTransfer.setData('text/plain', 'chair');
           } else {
-            e.dataTransfer.setData('application/json',
-                                  JSON.stringify(p.config));     // table data
+            e.dataTransfer.setData('application/json', JSON.stringify(p.config));
           }
           draggedItemType = p.type;
           e.dataTransfer.effectAllowed = 'copyMove';
+
+          // NEW: use a miniature table/chair as the drag image
+          const ghost = buildDragGhost(p.type, p.config);
+          document.body.appendChild(ghost);
+          e.dataTransfer.setDragImage(ghost, ghost.offsetWidth/2, ghost.offsetHeight/2);
+          e.target.addEventListener('dragend', () => ghost.remove(), { once:true });
         });
+
 
         // right-click / ctrl+click to remove
         if (!p.nonRemovable) {
@@ -630,6 +636,14 @@
       draggedItemType = e.target.getAttribute('data-type');
       e.dataTransfer.setData('text/plain', draggedItemType);
       e.dataTransfer.effectAllowed = 'copyMove';
+
+      // show the table / chair, not the blue label
+      const ghost = buildDragGhost(draggedItemType);
+      document.body.appendChild(ghost);                       // must be in DOM
+      e.dataTransfer.setDragImage(ghost, ghost.offsetWidth/2, ghost.offsetHeight/2);
+
+      // tidy-up afterwards
+      e.target.addEventListener('dragend', () => ghost.remove(), { once:true });
     }
 
     function handleDragOver(e) {
@@ -1116,6 +1130,38 @@
       chair.className = 'chair';
       return chair;
     }
+
+    /* ---------------------------------------------------------------
+    * Build a DOM element we can pass to dataTransfer.setDragImage()
+    * so the user sees a mini-table (or chair) instead of the label.
+    * -------------------------------------------------------------*/
+    function buildDragGhost(type, cfg = {}) {
+      const scale = 0.5;                    // cm → px (same you use elsewhere)
+
+      if (type === 'chair') {               // loose chair preset
+        const c = createChair();
+        c.style.cursor = 'default';
+        return c;
+      }
+
+      // ─── table ghost ─────────────────────────────────────────────
+      const g = document.createElement('div');
+      g.className = `table ${type}`;
+      g.style.position = 'absolute';
+      g.style.pointerEvents = 'none';
+      g.style.opacity = '0.8';              // translucent
+
+      if (type === 'rectangular') {
+        g.style.width  = (cfg.width  ?? 120) * scale + 'px';
+        g.style.height = (cfg.length ?? 220) * scale + 'px';
+      } else {                              // round
+        const d = (cfg.diameter ?? 120) * scale;
+        g.style.width = g.style.height = d + 'px';
+        g.style.borderRadius = '50%';
+      }
+      return g;
+    }
+
 
 
     function moveOccupantBackToList(chair) {
