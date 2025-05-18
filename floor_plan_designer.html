@@ -560,7 +560,15 @@
           return;
         }
 
-        // 2) otherwise if it’s a loose chair or a whole table, try delete
+        // 2a) loose chair with someone seated: clear occupant only (new)
+        if (loose && loose.classList.contains('occupied')) {
+          e.preventDefault();
+          moveOccupantBackToList(loose);
+          updateStatus('Chair cleared');
+          return;
+        }
+
+        // 2b) otherwise loose chair (empty) or table: delete
         const target = loose || table;
         if (target) {
           e.preventDefault();
