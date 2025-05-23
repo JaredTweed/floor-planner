@@ -125,23 +125,24 @@ function switchTab(showAll){
 
 // ── upload flow ──────────────────────────────────────────────────────────
 addBtn.onclick = ()=>picker.click();
-picker.onchange = async (ev) => {
+picker.onchange = async ev => {
+  const newKeys = [];
   for (const file of ev.target.files) {
     const key = `${Date.now()}_${file.name}`;
-
-    // ③ Upload with only lat, lon, and taken in metadata
     await s3.send(new PutObjectCommand({
-      Bucket: BUCKET,
-      Key: key,
-      Body: file,
+      Bucket:      BUCKET,
+      Key:         key,
+      Body:        file,
       ContentType: file.type
     }));
-
     remember(key);
+    newKeys.push(key);
   }
   picker.value = "";
-  await render();
+  // only append the ones we just added
+  await appendNew(newKeys);
 };
+
 
 
 // ── overlay & download ────────────────────────────────────────────────────
@@ -231,41 +232,88 @@ async function render() {
   }
   // sort by *chosenDate* later, so first build an array with dates
   const withDates = await mapWithLimit(page, async ({Key,LastModified})=>{ 
-    const url = `https://${BUCKET}.s3.${REGION}.amazonaws.com/${encodeURIComponent(Key)}`;
 
-    // // ① EXIF-parse only the DateTimeOriginal tag
-    // let exif = {};
-    // try {
-    //   exif = await parse(url, ["DateTimeOriginal"]) || {};
-    // } catch (err) {
-    //   console.warn("EXIF parse failed for", Key, err);
-    // }
 
-    // ② Gather three candidates
-    const origDate = null;//exif.DateTimeOriginal;
-    const origMs   = origDate   instanceof Date ? origDate.getTime() : NaN;
-    const modMs    = new Date(LastModified).getTime();
-
-    // console.log(`Key=${Key}`);
-    // console.log("   EXIF DateTimeOriginal =", origDate);
-    // console.log("   S3 LastModified        =", new Date(modMs));
-
-    // ③ Pick original if valid, else fall back to LastModified
-    const chosenMs    = !isNaN(origMs) ? origMs : modMs;
-    const chosenLabel = !isNaN(origMs) ? "EXIF Original" : "S3 LastModified";
-    // console.log(" ▶ Chosen:", new Date(chosenMs), `(${chosenLabel})`);
-
-    return { Key, LastModified, takenDate: new Date(chosenMs) };
+    return { Key, LastModified, takenDate: await getExifDate(Key, LastModified)  };
   });
 
   // 3) Now sort by our chosenDate (newest→oldest)
   withDates.sort((a, b) => b.takenDate - a.takenDate);
 
+  console.log("withDates", withDates);
+
   // Now render in that order
   const mySet = mine();
   panelAll.innerHTML = panelMine.innerHTML = "";
 
-  for (const { Key, takenDate /* lat, lon */ } of withDates) {
+  for (const { Key, takenDate } of withDates) {
+    buildFigure(Key, takenDate, mySet);
+  }
+
+  loadMoreBtn.style.display = (loadedCount < Contents.length) ? 'inline-block' : 'none';
+}
+
+
+/* ---------- helpers -------------------------------------------------- */
+// add a data-attribute that we can sort on
+function tagWithTaken(fig, date) {
+  fig.dataset.taken = String(date.getTime());   // newest → largest number
+}
+
+// (re)sort all children in a panel by that attribute (DESC)
+function sortPanel(panel) {
+  [...panel.children]                       // live HTMLCollection → array
+    .sort((a, b) => Number(b.dataset.taken) - Number(a.dataset.taken))
+    .forEach(el => panel.appendChild(el));  // re-append in correct order
+}
+
+// quickly wire clone → delete handler
+function rewireDelete(origFig, cloneFig) {
+  const o = origFig.querySelector('.del');
+  const c = cloneFig.querySelector('.del');
+  if (o && c) c.onclick = o.onclick;
+}
+
+async function appendNew(keys) {
+  const me = mine();
+
+  for (const Key of keys) {
+    // head + EXIF → takenDate
+    const head      = await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key }));
+    const ms        = head.Metadata?.taken ? +head.Metadata.taken : Date.now();
+    const takenDate = await getExifDate(Key, ms);
+
+    /* build but DON’T append yet */
+    const fig = await buildFigure(Key, takenDate, me);
+
+    loadedCount++;              // keep paging logic happy
+  }
+
+  /* finally: re-sort both panels so the new items land in place */
+  sortPanel(panelAll);
+  sortPanel(panelMine);
+
+  /* update "Load more" visibility */
+  const { Contents = [] } = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET }));
+  loadMoreBtn.style.display = loadedCount < Contents.length ? 'inline-block' : 'none';
+}
+
+async function getExifDate(Key, LastModified) {
+  const url = `https://${BUCKET}.s3.${REGION}.amazonaws.com/${encodeURIComponent(Key)}`;
+  let exif = {};
+  try {
+    exif = await parse(url, ["DateTimeOriginal"]) || {};
+  } catch (err) {
+    console.warn("EXIF parse failed for", url, err);
+  }
+  const origDate = exif.DateTimeOriginal;
+  const origMs   = origDate instanceof Date ? origDate.getTime() : NaN;
+  const modMs    = new Date(LastModified).getTime();
+
+  return new Date(origMs || modMs);
+}
+
+async function buildFigure(Key, takenDate, mySet) {
     const url        = `https://${BUCKET}.s3.${REGION}.amazonaws.com/${encodeURIComponent(Key)}`;
     const isMine     = mySet.has(Key);
     const isVideo    = /\.(mp4|mov|webm)$/i.test(Key);
@@ -283,6 +331,7 @@ async function render() {
 
     // build the figure
     const fig = document.createElement('figure');
+    tagWithTaken(fig, takenDate);
     fig.style.cursor = 'pointer';
     fig.onclick = () => openOverlay(url, isVideo, tsReadable, Key.split('/').pop());
 
@@ -345,10 +394,11 @@ async function render() {
 
       panelMine.appendChild(clone);
     }
-  }
 
-  loadMoreBtn.style.display = (loadedCount < Contents.length) ? 'inline-block' : 'none';
+  return fig;
 }
+
+
 
 // initial render
 render();
