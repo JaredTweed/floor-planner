@@ -5,7 +5,8 @@
 <title>Wedding Photo Upload</title>
 <style>
 body{font-family:system-ui;margin:0;background:#fafafa;color:#222}
-header{padding:1rem}
+header{padding:10px}
+#addBtn{margin:0;padding:0.5rem 1rem;cursor:pointer;width:100%;font-size:1rem; border-radius: 8px;}
 #tabs{display:flex;gap:.5rem;margin-bottom:1rem}
 .tab-header{padding:.4rem 1rem;border:1px solid #ccc;border-bottom:none;
             background:#eee;cursor:pointer;border-radius:6px 6px 0 0}
@@ -43,7 +44,6 @@ img,video{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:8px}
 #downloadBtn{position:fixed;bottom:0.75rem;left:50%;transform:translateX(-50%);
              padding:.6rem 1.2rem;background:#fff;border:1px solid #444;border-radius:6px;
              cursor:pointer;font-weight:600;z-index:10001}
-#addBtn{margin:0 1rem 0rem;padding:.5rem 1rem;font-size:1rem; border-radius: 8px;}
 </style>
 </head>
 <body>
@@ -240,7 +240,7 @@ async function render() {
   // 3) Now sort by our chosenDate (newest→oldest)
   withDates.sort((a, b) => b.takenDate - a.takenDate);
 
-  console.log("withDates", withDates);
+  // console.log("withDates", withDates);
 
   // Now render in that order
   const mySet = mine();
