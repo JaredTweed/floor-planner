@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Wedding Photo Upload</title>
+<style>
+body{font-family:system-ui;margin:0;background:#fafafa;color:#222}
+header{padding:1rem}
+#tabs{display:flex;gap:.5rem;margin-bottom:1rem}
+.tab-header{padding:.4rem 1rem;border:1px solid #ccc;border-bottom:none;
+            background:#eee;cursor:pointer;border-radius:6px 6px 0 0}
+.tab-header.active{background:#fff;font-weight:600}
+.tab-panel{display:none}
+.tab-panel.active{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));
+                  gap:.75rem;padding:0 1rem 2rem}
+figure{margin:0;position:relative}
+img,video{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:8px}
+.del{position:absolute;top:4px;right:4px;border-radius:4px;font-size:.75rem;cursor:pointer}
+
+#overlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+         background:rgba(0,0,0,.8);z-index:10000}
+#overlay.visible{display:flex}
+#overlay img,#overlay video{max-width:90vw;max-height:80vh;border-radius:8px}
+#timestamp{position:absolute;top:1rem;left:50%;transform:translateX(-50%);
+           color:#fff;font-size:1.1rem;font-weight:600}
+#downloadBtn{position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);
+             padding:.6rem 1.2rem;background:#fff;border:1px solid #444;border-radius:6px;
+             cursor:pointer;font-weight:600;z-index:10001}
+#addBtn{margin:0 1rem 1rem;padding:.5rem 1rem;font-size:1rem}
+</style>
+</head>
+<body>
+<header>
+  <button id="addBtn">Add photos / videos</button>
+  <input id="filePicker" type="file" multiple accept="image/*,video/*" hidden>
+</header>
+
+<div id="tabs">
+  <div id="tabAll"  class="tab-header active">All Uploads</div>
+  <div id="tabMine" class="tab-header">My Uploads</div>
+</div>
+<section id="panelAll"  class="tab-panel active"></section>
+<section id="panelMine" class="tab-panel"></section>
+<footer id="loadMoreContainer" style="text-align:center; padding:1rem;">
+  <button id="loadMoreBtn" style="padding:.5rem 1rem; font-size:1rem;">Load more</button>
+</footer>
+
+<div id="overlay">
+  <div id="timestamp"></div>
+</div>
+<button id="downloadBtn" style="display:none">Download</button>
+
+<script type="module">
+// ── AWS config ─────────────────────────────────────────────────────────────
+const REGION  = "us-west-2";
+const ID_POOL = "us-west-2:8e34a4e5-741b-402e-9bfb-eeb90b5643e3";
+const BUCKET  = "weddingphotos-2025";
+
+import {
+  S3Client, ListObjectsV2Command, PutObjectCommand, HeadObjectCommand, DeleteObjectCommand
+} from "https://esm.sh/@aws-sdk/client-s3@3.569.0?bundle&target=es2020&conditions=browser";
+import { fromCognitoIdentityPool }
+  from "https://esm.sh/@aws-sdk/credential-provider-cognito-identity@3.569.0?bundle&target=es2020&conditions=browser";
+
+const s3 = new S3Client({
+  region: REGION,
+  credentials: fromCognitoIdentityPool({ identityPoolId: ID_POOL, clientConfig:{region:REGION}})
+});
+
+// ── use localStorage instead of cookies ────────────────────────────────────
+function getUploads(){
+  try { return JSON.parse(localStorage.getItem("myUploads") || "[]"); }
+  catch { return []; }
+}
+function saveUploads(arr){
+  localStorage.setItem("myUploads", JSON.stringify(arr));
+}
+function remember(key){
+  const arr = getUploads();
+  if (!arr.includes(key)) {
+    arr.push(key);
+    saveUploads(arr);
+  }
+}
+function mine(){
+  return new Set(getUploads());
+}
+
+// ── DOM refs & tabs ───────────────────────────────────────────────────────
+const picker   = document.getElementById('filePicker');
+const addBtn   = document.getElementById('addBtn');
+const panelAll = document.getElementById('panelAll');
+const panelMine= document.getElementById('panelMine');
+const overlay  = document.getElementById('overlay');
+const tsLabel  = document.getElementById('timestamp');
+const dlBtn    = document.getElementById('downloadBtn');
+
+document.getElementById('tabAll').onclick  = ()=>switchTab(true);
+document.getElementById('tabMine').onclick = ()=>switchTab(false);
+function switchTab(showAll){
+  document.getElementById('tabAll').classList.toggle('active',  showAll);
+  document.getElementById('tabMine').classList.toggle('active', !showAll);
+  panelAll.classList.toggle('active',  showAll);
+  panelMine.classList.toggle('active', !showAll);
+}
+
+// ── upload flow ──────────────────────────────────────────────────────────
+addBtn.onclick = ()=>picker.click();
+picker.onchange = async ev => {
+  for (const file of ev.target.files) {
+    const key = `${Date.now()}_${file.name}`
+
+    // Upload the full-res file
+    await s3.send(new PutObjectCommand({
+      Bucket: BUCKET,
+      Key:    key,
+      Body:   file,
+      ContentType: file.type,
+      Metadata:   { taken: String(file.lastModified) }
+    }))
+
+    // Remember it instantly
+    remember(key)
+  }
+
+  picker.value = ""
+  await render()
+}
+
+
+// ── overlay & download ────────────────────────────────────────────────────
+let currentSrc = "", currentName = "";
+function openOverlay(src,isVideo,tsReadable,fileName){
+  currentSrc = src; currentName = fileName;
+  overlay.innerHTML = "";
+  tsLabel.textContent = `${tsReadable}`;
+  overlay.appendChild(tsLabel);
+  overlay.appendChild(isVideo
+    ? Object.assign(document.createElement('video'), {src,controls:true})
+    : Object.assign(document.createElement('img'),   {src})
+  );
+  overlay.classList.add('visible');
+  dlBtn.style.display = 'block';
+}
+function closeOverlay(){
+  overlay.classList.remove('visible');
+  dlBtn.style.display = 'none';
+}
+overlay.onclick = e=>{ if(e.target===overlay) closeOverlay(); };
+window.addEventListener('keydown', e=>{ if(e.key==='Escape') closeOverlay(); });
+
+dlBtn.onclick = async ()=>{
+  dlBtn.disabled = true;
+  try {
+    const resp = await fetch(currentSrc);
+    const blob = await resp.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = Object.assign(document.createElement('a'), {
+      href: url, download: currentName
+    });
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  } finally { dlBtn.disabled = false; }
+};
+
+// ── gallery render (newest→oldest) ───────────────────────────────────────
+// ── lazy-load observer ─────────────────────────────────────────────────────
+const io = new IntersectionObserver(entries => {
+  for (let e of entries) {
+    if (e.isIntersecting) {
+      const el = e.target;
+      el.src = el.dataset.src;
+      if (el.tagName === 'VIDEO') el.load();
+      io.unobserve(el);
+    }
+  }
+}, { rootMargin: '200px' });
+
+// ── paging variables ───────────────────────────────────────────────────────
+const batchSize = 20;
+let loadedCount = batchSize;
+const loadMoreBtn = document.getElementById('loadMoreBtn');
+loadMoreBtn.onclick = () => {
+  loadedCount += batchSize;
+  render();
+};
+
+// ── paged & lazy render ────────────────────────────────────────────────────
+async function render(){
+  const { Contents=[] } = await s3.send(
+    new ListObjectsV2Command({ Bucket: BUCKET })
+  );
+
+  // 1) For the current page, fetch each object’s “taken” metadata via HEAD
+  const page = Contents
+    .slice(0, loadedCount)
+    .map(o => ({ Key: o.Key, LastModified: o.LastModified }));
+
+  const withDates = await Promise.all(page.map(async ({ Key, LastModified }) => {
+    let takenDate = new Date(LastModified);
+    try {
+      const head = await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key }));
+      if (head.Metadata?.taken) {
+        takenDate = new Date(parseInt(head.Metadata.taken, 10));
+      }
+    } catch {}
+    return { Key, LastModified, takenDate };
+  }));
+
+  // 2) Sort by our “takenDate” newest→oldest
+  withDates.sort((a, b) => b.takenDate - a.takenDate);
+
+  // 3) Now render in that order
+  const mySet = mine();
+  panelAll.innerHTML = panelMine.innerHTML = "";
+
+  for (const { Key, takenDate } of withDates) {
+    const url        = `https://${BUCKET}.s3.${REGION}.amazonaws.com/${encodeURIComponent(Key)}`;
+    const isMine     = mySet.has(Key);
+    const isVideo    = /\.(mp4|mov|webm)$/i.test(Key);
+    const timePart = takenDate.toLocaleTimeString("en-US", {
+      hour:   "2-digit",
+      minute: "2-digit",
+      hour12: false
+    });
+    const datePart = takenDate.toLocaleDateString("en-US", {
+      month: "short",
+      day:   "2-digit",
+      year:  "numeric"
+    });
+    const tsReadable = `${timePart}, ${datePart}`;
+
+    // build the figure
+    const fig = document.createElement('figure');
+    fig.style.cursor = 'pointer';
+    fig.onclick = () => openOverlay(url, isVideo, tsReadable, Key.split('/').pop());
+
+    // thumbnail or video placeholder
+    if (isVideo) {
+      const v = document.createElement('video');
+      v.muted = true; v.controls = false; v.preload = 'none';
+      v.dataset.src = url;
+      fig.appendChild(v);
+      io.observe(v);
+    } else {
+      const img = document.createElement('img');
+      img.loading   = 'lazy';
+      img.dataset.src = url;
+      fig.appendChild(img);
+      io.observe(img);
+    }
+
+    // delete button (only on “mine”)
+    if (isMine) {
+      const del = document.createElement('button');
+      del.className   = 'del';
+      del.textContent = '🗑';
+      del.onclick = async (e) => {
+        e.stopPropagation();       // ← prevent openOverlay
+        await s3.send(new DeleteObjectCommand({ Bucket:BUCKET, Key }));
+        render();
+      };
+      fig.appendChild(del);
+    }
+
+    // always add to “All”
+    panelAll.appendChild(fig);
+
+    // if it’s mine, clone *and* re-attach handlers for “My Uploads”
+    if (isMine) {
+      // Clone the figure for the “My Uploads” pane
+      const clone = fig.cloneNode(true);
+
+      // 1) Re-attach lazy-load observer to the cloned thumb
+      const thumb = clone.querySelector('img, video');
+      if (thumb) io.observe(thumb);
+
+      // 2) Re-bind the click to openOverlay
+      clone.onclick = fig.onclick;
+
+      // 3) Swap out the delete button’s handler to just open (no delete)
+      const cloneDel = clone.querySelector('.del');
+      if (cloneDel) {
+        cloneDel.onclick = (e) => {
+          e.stopPropagation();          // don’t also fire the fig.onclick twice
+          fig.onclick();                // open the overlay
+        };
+      }
+
+      panelMine.appendChild(clone);
+    }
+  }
+
+  loadMoreBtn.style.display = (loadedCount < Contents.length) ? 'inline-block' : 'none';
+}
+
+// initial render
+render();
+</script>
+</body>
+</html>

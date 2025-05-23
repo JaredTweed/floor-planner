@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Upload Your Wedding Photos</title>
+<style>
+  body{font-family:system-ui;margin:0;padding:2rem;background:#fafafa;color:#222}
+  header{margin-bottom:1rem}
+  #signin-btn{padding:.6rem 1rem;font-size:1rem}
+  #upload-btn{padding:.4rem 1rem;margin:1rem 0}
+  #gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:1rem}
+  figure{margin:0;position:relative}
+  figcaption{font-size:.8rem;margin-top:.25rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  button.delete{position:absolute;top:4px;right:4px;padding:2px 6px;font-size:.7rem}
+  video, img{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:6px}
+</style>
+</head>
+<body>
+<header>
+  <h2>📸 Share your photos &amp; videos</h2>
+  <button id="signin-btn">Sign in with Google</button>
+  <input type="file" id="filepicker" multiple accept="image/*,video/*" style="display:none">
+  <button id="upload-btn" style="display:none">Add photos / videos</button>
+</header>
+
+<section id="gallery"></section>
+
+<!-- Google Identity / Drive JS (gapi) -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://apis.google.com/js/api.js"></script>
+<script>
+const FOLDER_ID = "1LLkVNa3nENCto-GzrIr7vCsy9Xjbn1Zd";
+const CLIENT_ID = "YOUR_CLIENT_ID.apps.googleusercontent.com";        // <- paste from Google Cloud
+const SCOPES    = "https://www.googleapis.com/auth/drive.file";       // upload & view own files
+let tokenClient, gapiInited = false, userToken = null;
+
+document.getElementById('signin-btn').onclick = () => tokenClient.requestAccessToken({prompt:"consent"});
+document.getElementById('upload-btn').onclick = ()=> document.getElementById('filepicker').click();
+document.getElementById('filepicker').onchange = handleUpload;
+
+// 1) init gapi
+window.onload = () => {
+  gapi.load('client', async () => {
+      await gapi.client.init({apiKey:"", discoveryDocs:["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"]});
+      gapiInited = true;
+      maybeEnableButtons();
+  });
+
+  tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: CLIENT_ID,
+      scope: SCOPES,
+      callback: (resp) => {
+        userToken = resp.access_token;
+        gapi.client.setToken({access_token:userToken});
+        document.getElementById('signin-btn').style.display="none";
+        document.getElementById('upload-btn').style.display="";
+        loadGallery();
+      }
+  });
+};
+
+function maybeEnableButtons(){
+  if (gapiInited) document.getElementById('signin-btn').disabled = false;
+}
+
+// 2) list files in the folder
+async function loadGallery(){
+  const res = await gapi.client.drive.files.list({
+      q: `'${FOLDER_ID}' in parents and trashed = false`,
+      fields: "files(id,name,thumbnailLink,webContentLink,ownedByMe,mimeType)"
+  });
+  const gallery = document.getElementById('gallery');
+  gallery.innerHTML = "";
+  res.result.files.forEach(f=>{
+      const fig = document.createElement('figure');
+      const media = f.mimeType.startsWith("video/")
+        ? `<video src="${f.webContentLink}" muted controls></video>`
+        : `<img src="${f.thumbnailLink}&sz=w320-h320">`;
+      fig.innerHTML = media + `<figcaption>${f.name}</figcaption>`;
+      if (f.ownedByMe){
+          const del = document.createElement('button');
+          del.textContent = "✖";
+          del.className = "delete";
+          del.onclick = () => deleteFile(f.id);
+          fig.appendChild(del);
+      }
+      gallery.appendChild(fig);
+  });
+}
+
+// 3) upload selected files
+async function handleUpload(evt){
+  const files = [...evt.target.files];
+  for (const file of files){
+      const metadata = { name:file.name, parents:[FOLDER_ID] };
+      const boundary = '-------314159265358979323846';
+      const delimiter = "\r\n--"+boundary+"\r\n";
+      const close_delim = "\r\n--"+boundary+"--";
+
+      const reader = new FileReader();
+      reader.onload = async (e)=>{
+        const contentType = file.type || 'application/octet-stream';
+        const base64Data = btoa(e.target.result);
+        const multipartRequestBody =
+            delimiter + 'Content-Type: application/json\r\n\r\n' +
+            JSON.stringify(metadata) + delimiter +
+            'Content-Type: '+contentType+'\r\n' +
+            'Content-Transfer-Encoding: base64\r\n' + '\r\n' +
+            base64Data + close_delim;
+
+        await gapi.client.request({
+            path: '/upload/drive/v3/files',
+            method: 'POST',
+            params: { uploadType: 'multipart' },
+            headers: { 'Content-Type': 'multipart/related; boundary="'+boundary+'"' },
+            body: multipartRequestBody
+        });
+        loadGallery();               // refresh after each upload
+      };
+      reader.readAsBinaryString(file);
+  }
+  evt.target.value="";               // reset picker
+}
+
+// 4) delete (only own files)
+async function deleteFile(fileId){
+  await gapi.client.drive.files.delete({fileId});
+  loadGallery();
+}
+</script>
+</body>
+</html>
