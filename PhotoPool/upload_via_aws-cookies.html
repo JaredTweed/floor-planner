@@ -15,7 +15,76 @@ header{padding:10px}
 .tab-panel.active{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));
                   gap:.75rem;padding:0 1rem 2rem}
 figure{margin:0;position:relative}
-img,video{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:8px}
+img,video{box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:10px;cursor:pointer;}
+
+/* the white “checkbox” */
+.select-box {
+  position: absolute;
+  top: 6px; right: 6px;
+  width: 20px; height: 20px;
+  border: 2px solid rgba(255,255,255,0.8);
+  background: rgba(255,255,255,0.6);
+  border-radius: 4px;
+  box-sizing: border-box;
+  z-index: 3;
+}
+
+/* when selected, fill it */
+figure.selected .select-box {
+  background: #fff;
+  box-shadow: 0 0 8px rgba(0, 0, 0, 0.4);
+}
+figure.selected img:not(.video-icon),
+figure.selected video {
+  width: calc(100% - 8px);
+  border: 4px solid black;
+}
+
+/* toolbar at bottom */
+#selectionToolbar {
+  position: fixed;
+  bottom: 0; left: 0;
+  width: 100%;
+  padding: 0.5rem;
+  background: #fff;
+  box-shadow: 0 -2px 6px rgba(0,0,0,0.15);
+  display: none;
+  align-items: center;          /* vertical center */
+  justify-content: space-between;
+  text-align: center;
+  z-index: 20000;
+  box-sizing: border-box;
+  gap: 0.5rem;
+}
+
+#deselectAll {
+  position: absolute;
+  right: 1.2rem; top: calc(50% - 0.1rem);
+  transform: translateY(-50%);
+  font-size: 1.2rem;
+  cursor: pointer;
+}
+
+#selectionToolbar button {
+  padding: 0.6rem 0.5rem;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+}
+#downloadSelected {
+  flex: 1;                      /* take up all available space */
+  margin-right: 2.5rem;
+  background: #4CAF50;
+  color: #fff;
+}
+
+#deleteSelected {
+  flex: none;                   /* only as big as its content */
+  background: #f44336;
+  color: #fff;
+}
+
 .del{position:absolute;top:4px;right:4px;border-radius:4px;font-size:.75rem;cursor:pointer}
 .video-icon {
   position: absolute;
@@ -62,6 +131,12 @@ img,video{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:8px}
   <button id="loadMoreBtn" style="padding:.5rem 1rem; font-size:1rem;">Load more</button>
 </footer>
 
+<div id="selectionToolbar">
+  <button id="deleteSelected">Delete</button>
+  <button id="downloadSelected">Download</button>
+  <span id="deselectAll">&times;</span>
+</div>
+
 <div id="overlay">
   <div id="timestamp"></div>
 </div>
@@ -80,6 +155,42 @@ import {
 } from "https://esm.sh/@aws-sdk/client-s3@3.569.0?bundle&target=es2020&conditions=browser";
 import { fromCognitoIdentityPool }
   from "https://esm.sh/@aws-sdk/credential-provider-cognito-identity@3.569.0?bundle&target=es2020&conditions=browser";
+
+
+import JSZip from 'https://esm.sh/jszip@3.10.1';
+
+const selectedKeys = new Set();
+const toolbar       = document.getElementById('selectionToolbar');
+const btnDownload   = document.getElementById('downloadSelected');
+const btnDelete     = document.getElementById('deleteSelected');
+
+const btnDeselect = document.getElementById('deselectAll');
+btnDeselect.onclick = () => {
+  // clear all selections
+  document.querySelectorAll('figure.selected').forEach(f => f.classList.remove('selected'));
+  selectedKeys.clear();
+  updateToolbar();
+};
+
+function updateToolbar() {
+  const count = selectedKeys.size;
+  if (count === 0) {
+    toolbar.style.display = 'none';
+    return;
+  }
+  toolbar.style.display = 'flex';
+  btnDownload.textContent = `Download (${count})`;
+
+  // only show Delete if *all* selectedKeys are in your own set
+  const mineSet = mine();
+  const allOwned = Array.from(selectedKeys).every(key => mineSet.has(key));
+  btnDelete.style.display = allOwned ? 'inline-block' : 'none';
+  btnDelete.textContent = allOwned
+    ? `Delete (${count})`
+    : '';
+}
+
+
 
 const s3 = new S3Client({
   region: REGION,
@@ -331,9 +442,12 @@ async function buildFigure(Key, takenDate, mySet) {
 
     // build the figure
     const fig = document.createElement('figure');
+    fig.dataset.key = Key;
     tagWithTaken(fig, takenDate);
     fig.style.cursor = 'pointer';
-    fig.onclick = () => openOverlay(url, isVideo, tsReadable, Key.split('/').pop());
+    // --- long-press support ---
+    let longPress = false;
+    let lpTimer;
 
     // thumbnail or video placeholder
     if (isVideo) {
@@ -357,18 +471,55 @@ async function buildFigure(Key, takenDate, mySet) {
       io.observe(img);
     }
 
-    // delete button (only on “mine”)
-    if (isMine) {
-      const del = document.createElement('button');
-      del.className   = 'del';
-      del.textContent = '🗑';
-      del.onclick = async (e) => {
-        e.stopPropagation();       // ← prevent openOverlay
-        await s3.send(new DeleteObjectCommand({ Bucket:BUCKET, Key }));
-        render();
-      };
-      fig.appendChild(del);
-    }
+    // add selection box to every item
+    const box = document.createElement('div');
+    box.className = 'select-box';
+    box.onclick = e => {
+      e.stopPropagation();
+      const isSelected = selectedKeys.has(Key);
+
+      if (isSelected) {
+        selectedKeys.delete(Key);
+      } else {
+        selectedKeys.add(Key);
+      }
+
+      // toggle the class on *every* matching figure
+      document.querySelectorAll(`figure[data-key="${Key}"]`)
+        .forEach(f => f.classList.toggle('selected', !isSelected));
+
+      updateToolbar();
+    };
+
+    fig.appendChild(box);
+
+    fig.addEventListener('mousedown', e => {
+      // only trigger long-press when not already multi-selecting
+      if (selectedKeys.size === 0) {
+        lpTimer = setTimeout(() => {
+          longPress = true;
+          box.click();         // toggle selection
+        }, 500);
+      }
+    });
+
+    fig.addEventListener('mouseup', e => {
+      clearTimeout(lpTimer);
+    });
+
+    // override click behavior
+    fig.onclick = e => {
+      if (longPress) {
+        // consumed by the long-press toggle
+        longPress = false;
+        return;
+      }
+      if (selectedKeys.size > 0) {
+        box.click();         // regular click now toggles once you've started selecting
+      } else {
+        openOverlay(url, isVideo, tsReadable, Key.split('/').pop());
+      }
+    };
 
     // always add to “All”
     panelAll.appendChild(fig);
@@ -377,6 +528,14 @@ async function buildFigure(Key, takenDate, mySet) {
     if (isMine) {
       // Clone the figure for the “My Uploads” pane
       const clone = fig.cloneNode(true);
+
+      // 0) get the original box and the clone's box
+      const origBox  = fig.querySelector('.select-box');
+      const cloneBox = clone.querySelector('.select-box');
+      // 1) re-bind the click handler
+      if (origBox && cloneBox) {
+        cloneBox.onclick = origBox.onclick;
+      }
 
       // 1) Re-attach lazy-load observer to the cloned thumb
       const thumb = clone.querySelector('img, video');
@@ -398,10 +557,69 @@ async function buildFigure(Key, takenDate, mySet) {
   return fig;
 }
 
-
-
 // initial render
 render();
+
+
+// 1) Download Selected
+btnDownload.onclick = async () => {
+  if (selectedKeys.size === 0) return;
+  const keys = Array.from(selectedKeys);
+  if (keys.length === 1) {
+    // single file: just fetch & download
+    const url = `https://${BUCKET}.s3.${REGION}.amazonaws.com/${encodeURIComponent(keys[0])}`;
+    const resp = await fetch(url);
+    const blob = await resp.blob();
+    const a    = Object.assign(document.createElement('a'), {
+      href: URL.createObjectURL(blob),
+      download: keys[0].split('_').slice(1).join('_')
+    });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } else {
+    // multiple: zip them
+    const zip = new JSZip();
+    await Promise.all(keys.map(async key => {
+      const url  = `https://${BUCKET}.s3.${REGION}.amazonaws.com/${encodeURIComponent(key)}`;
+      const resp = await fetch(url);
+      const blob = await resp.blob();
+      zip.file(key.split('_').slice(1).join('_'), blob);
+    }));
+    const content = await zip.generateAsync({ type: 'blob' });
+    const a = Object.assign(document.createElement('a'), {
+      href: URL.createObjectURL(content),
+      download: 'maiya-jared-2025.zip'
+    });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+};
+
+// 2) Delete Selected
+btnDelete.onclick = async () => {
+  const count = selectedKeys.size;
+  if (!confirm(`Are you sure you want to delete ${count} file${count>1?'s':''}?`)) {
+    return;
+  }
+  // perform deletes in parallel
+  await Promise.all(
+    Array.from(selectedKeys).map(key =>
+      s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }))
+    )
+  );
+
+  for (const key of Array.from(selectedKeys)) {
+    // remove both the original and any clone
+    document
+      .querySelectorAll(`figure[data-key="${key}"]`)
+      .forEach(fig => fig.remove());
+  }
+  selectedKeys.clear();
+  updateToolbar();
+};
+
 </script>
 </body>
 </html>
