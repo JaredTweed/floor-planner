@@ -16,17 +16,34 @@ header{padding:1rem}
 figure{margin:0;position:relative}
 img,video{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:8px}
 .del{position:absolute;top:4px;right:4px;border-radius:4px;font-size:.75rem;cursor:pointer}
+.video-icon {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 24px;      /* scale down the 48×48 PNG */
+  height: 24px;
+  pointer-events: none;
+  z-index: 2;
+  background-color: rgba(255, 255, 255, 0.5);
+  border-radius: 3px;
+}
 
 #overlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
          background:rgba(0,0,0,.8);z-index:10000}
 #overlay.visible{display:flex}
-#overlay img,#overlay video{max-width:90vw;max-height:80vh;border-radius:8px}
+#overlay img,#overlay video{max-width:90vw;max-height:min(87vh, calc(100% - 30px));  
+  position: absolute; top:49.5%; transform:translateY(-50%);
+  
+  width: auto;
+  height: auto;
+  aspect-ratio: auto;
+  object-fit: contain;border-radius:8px}
 #timestamp{position:absolute;top:1rem;left:50%;transform:translateX(-50%);
-           color:#fff;font-size:1.1rem;font-weight:600}
-#downloadBtn{position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);
+           color:#fff;font-size:1.1rem;font-weight:600; text-align: center;z-index:10001; text-shadow: 1px 1px 5px black;}
+#downloadBtn{position:fixed;bottom:0.75rem;left:50%;transform:translateX(-50%);
              padding:.6rem 1.2rem;background:#fff;border:1px solid #444;border-radius:6px;
              cursor:pointer;font-weight:600;z-index:10001}
-#addBtn{margin:0 1rem 1rem;padding:.5rem 1rem;font-size:1rem}
+#addBtn{margin:0 1rem 0rem;padding:.5rem 1rem;font-size:1rem; border-radius: 8px;}
 </style>
 </head>
 <body>
@@ -56,6 +73,8 @@ const REGION  = "us-west-2";
 const ID_POOL = "us-west-2:8e34a4e5-741b-402e-9bfb-eeb90b5643e3";
 const BUCKET  = "weddingphotos-2025";
 
+import { parse } from
+  "https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.esm.mjs"; 
 import {
   S3Client, ListObjectsV2Command, PutObjectCommand, HeadObjectCommand, DeleteObjectCommand
 } from "https://esm.sh/@aws-sdk/client-s3@3.569.0?bundle&target=es2020&conditions=browser";
@@ -106,26 +125,23 @@ function switchTab(showAll){
 
 // ── upload flow ──────────────────────────────────────────────────────────
 addBtn.onclick = ()=>picker.click();
-picker.onchange = async ev => {
+picker.onchange = async (ev) => {
   for (const file of ev.target.files) {
-    const key = `${Date.now()}_${file.name}`
+    const key = `${Date.now()}_${file.name}`;
 
-    // Upload the full-res file
+    // ③ Upload with only lat, lon, and taken in metadata
     await s3.send(new PutObjectCommand({
       Bucket: BUCKET,
-      Key:    key,
-      Body:   file,
-      ContentType: file.type,
-      Metadata:   { taken: String(file.lastModified) }
-    }))
+      Key: key,
+      Body: file,
+      ContentType: file.type
+    }));
 
-    // Remember it instantly
-    remember(key)
+    remember(key);
   }
-
-  picker.value = ""
-  await render()
-}
+  picker.value = "";
+  await render();
+};
 
 
 // ── overlay & download ────────────────────────────────────────────────────
@@ -143,6 +159,13 @@ function openOverlay(src,isVideo,tsReadable,fileName){
   dlBtn.style.display = 'block';
 }
 function closeOverlay(){
+  /* ① stop video if one is present */
+  const vid = overlay.querySelector('video');
+  if (vid) {
+    vid.pause();
+    vid.currentTime = 0;
+  }
+
   overlay.classList.remove('visible');
   dlBtn.style.display = 'none';
 }
@@ -186,35 +209,63 @@ loadMoreBtn.onclick = () => {
 };
 
 // ── paged & lazy render ────────────────────────────────────────────────────
-async function render(){
-  const { Contents=[] } = await s3.send(
-    new ListObjectsV2Command({ Bucket: BUCKET })
-  );
+async function render() {
+  const { Contents=[] } = await s3.send(new ListObjectsV2Command({ Bucket:BUCKET }));
 
-  // 1) For the current page, fetch each object’s “taken” metadata via HEAD
-  const page = Contents
-    .slice(0, loadedCount)
-    .map(o => ({ Key: o.Key, LastModified: o.LastModified }));
-
-  const withDates = await Promise.all(page.map(async ({ Key, LastModified }) => {
-    let takenDate = new Date(LastModified);
-    try {
-      const head = await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key }));
-      if (head.Metadata?.taken) {
-        takenDate = new Date(parseInt(head.Metadata.taken, 10));
+  async function mapWithLimit(inputs, fn, limit=5) {
+    const ret = [];
+    let i = 0;
+    async function worker() {
+      while (i < inputs.length) {
+        const idx = i++;
+        ret[idx] = await fn(inputs[idx]);
       }
-    } catch {}
-    return { Key, LastModified, takenDate };
-  }));
+    }
+    await Promise.all(Array(limit).fill().map(worker));
+    return ret;
+  }
+  let page = Contents.slice(0, loadedCount);
+  if (page.length === 0) {
+    panelAll.innerHTML = panelMine.innerHTML = "<p>No uploads yet</p>";
+    return;
+  }
+  // sort by *chosenDate* later, so first build an array with dates
+  const withDates = await mapWithLimit(page, async ({Key,LastModified})=>{ 
+    const url = `https://${BUCKET}.s3.${REGION}.amazonaws.com/${encodeURIComponent(Key)}`;
 
-  // 2) Sort by our “takenDate” newest→oldest
+    // // ① EXIF-parse only the DateTimeOriginal tag
+    // let exif = {};
+    // try {
+    //   exif = await parse(url, ["DateTimeOriginal"]) || {};
+    // } catch (err) {
+    //   console.warn("EXIF parse failed for", Key, err);
+    // }
+
+    // ② Gather three candidates
+    const origDate = null;//exif.DateTimeOriginal;
+    const origMs   = origDate   instanceof Date ? origDate.getTime() : NaN;
+    const modMs    = new Date(LastModified).getTime();
+
+    // console.log(`Key=${Key}`);
+    // console.log("   EXIF DateTimeOriginal =", origDate);
+    // console.log("   S3 LastModified        =", new Date(modMs));
+
+    // ③ Pick original if valid, else fall back to LastModified
+    const chosenMs    = !isNaN(origMs) ? origMs : modMs;
+    const chosenLabel = !isNaN(origMs) ? "EXIF Original" : "S3 LastModified";
+    // console.log(" ▶ Chosen:", new Date(chosenMs), `(${chosenLabel})`);
+
+    return { Key, LastModified, takenDate: new Date(chosenMs) };
+  });
+
+  // 3) Now sort by our chosenDate (newest→oldest)
   withDates.sort((a, b) => b.takenDate - a.takenDate);
 
-  // 3) Now render in that order
+  // Now render in that order
   const mySet = mine();
   panelAll.innerHTML = panelMine.innerHTML = "";
 
-  for (const { Key, takenDate } of withDates) {
+  for (const { Key, takenDate /* lat, lon */ } of withDates) {
     const url        = `https://${BUCKET}.s3.${REGION}.amazonaws.com/${encodeURIComponent(Key)}`;
     const isMine     = mySet.has(Key);
     const isVideo    = /\.(mp4|mov|webm)$/i.test(Key);
@@ -242,6 +293,13 @@ async function render(){
       v.dataset.src = url;
       fig.appendChild(v);
       io.observe(v);
+
+      // add video icon
+      const icon = document.createElement('img');
+      icon.src   = 'https://img.icons8.com/fluency-systems-regular/48/video.png';
+      icon.alt   = 'video';
+      icon.className = 'video-icon';
+      fig.appendChild(icon);
     } else {
       const img = document.createElement('img');
       img.loading   = 'lazy';
@@ -279,12 +337,10 @@ async function render(){
       clone.onclick = fig.onclick;
 
       // 3) Swap out the delete button’s handler to just open (no delete)
-      const cloneDel = clone.querySelector('.del');
-      if (cloneDel) {
-        cloneDel.onclick = (e) => {
-          e.stopPropagation();          // don’t also fire the fig.onclick twice
-          fig.onclick();                // open the overlay
-        };
+      const origDel  = fig .querySelector('.del');   // original delete handler
+      const cloneDel = clone.querySelector('.del');  // delete in My Uploads
+      if (origDel && cloneDel) {
+        cloneDel.onclick = origDel.onclick;          // give it *the same* handler
       }
 
       panelMine.appendChild(clone);
