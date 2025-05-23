@@ -4,16 +4,74 @@
 <meta charset="utf-8" />
 <title>Wedding Photo Upload</title>
 <style>
+:root {
+  --primary-color:   hsl(127 33.5% 54.9%);
+  --secondary-color: #e6eef9;
+}
+
 body{font-family:system-ui;margin:0;background:#fafafa;color:#222}
 header{padding:10px}
-#addBtn{margin:0;padding:0.5rem 1rem;cursor:pointer;width:100%;font-size:1rem; border-radius: 8px;}
-#tabs{display:flex;gap:.5rem;margin-bottom:1rem}
+#addBtn{background-color: var(--primary-color);color: white;margin:0;padding:0.5rem 1rem;cursor:pointer;width:100%;font-size:1rem; border-radius: 8px; border: none;font-weight: 700;}
+
+/* make the tabs container a pill with a glider */
+#tabs.tabs {
+  margin: 0 10px 10px;
+  position: relative;
+  display: flex;
+  gap: .5rem;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow:
+    0 0 1px rgba(0,0,0,0.15),
+    0 6px 12px rgba(0,0,0,0.15);
+}
+
+#tabs.tabs > * {
+border-radius: 8px;
+}
+
+/* hide your old borders & backgrounds */
+#tabs.tabs .tab-header {
+  position: relative;
+  z-index: 2;
+  flex: 1;
+  text-align: center;
+  padding: 0.6rem 1rem;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  transition: color .15s ease-in;
+}
+
+/* active tab label color */
+#tabs.tabs .tab-header.active {
+  color: var(--primary-color);
+  font-weight: 600;
+}
+
+/* the moving “glider” */
+#tabs.tabs .glider {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: calc(50% - 5px); /* half width minus half margin */
+  background: var(--secondary-color);
+  margin: 5px;
+  z-index: 1;
+  transition: transform .5s ease-out;
+}
+
+/* glider position when each tab is active */
+#tabAll.active  ~ .glider { transform: translateX(0%); }
+#tabMine.active ~ .glider { transform: translateX(100%); }
+
+
+
 .tab-header{padding:.4rem 1rem;border:1px solid #ccc;border-bottom:none;
             background:#eee;cursor:pointer;border-radius:6px 6px 0 0}
 .tab-header.active{background:#fff;font-weight:600}
 .tab-panel{display:none}
 .tab-panel.active{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));
-                  gap:.75rem;padding:0 1rem 2rem}
+                  gap:.75rem;padding:0 10px 2rem}
 figure{margin:0;position:relative}
 img,video{box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:10px;cursor:pointer;}
 
@@ -75,7 +133,7 @@ figure.selected video {
 #downloadSelected {
   flex: 1;                      /* take up all available space */
   margin-right: 2.5rem;
-  background: #4CAF50;
+  background: var(--primary-color);
   color: #fff;
 }
 
@@ -117,14 +175,16 @@ figure.selected video {
 </head>
 <body>
 <header>
-  <button id="addBtn">Add photos / videos</button>
+  <button id="addBtn">Add Photos / Videos</button>
   <input id="filePicker" type="file" multiple accept="image/*,video/*" hidden>
 </header>
 
-<div id="tabs">
+<div id="tabs" class="tabs">
   <div id="tabAll"  class="tab-header active">All Uploads</div>
   <div id="tabMine" class="tab-header">My Uploads</div>
+  <span class="glider"></span>
 </div>
+
 <section id="panelAll"  class="tab-panel active"></section>
 <section id="panelMine" class="tab-panel"></section>
 <footer id="loadMoreContainer" style="text-align:center; padding:1rem;">
@@ -286,6 +346,8 @@ window.addEventListener('keydown', e=>{ if(e.key==='Escape') closeOverlay(); });
 
 dlBtn.onclick = async ()=>{
   dlBtn.disabled = true;
+  console.log("Downloading", currentSrc);
+  dlBtn.textContent = "Downloading...";
   try {
     const resp = await fetch(currentSrc);
     const blob = await resp.blob();
@@ -295,7 +357,7 @@ dlBtn.onclick = async ()=>{
     });
     document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(url);
-  } finally { dlBtn.disabled = false; }
+  } finally { dlBtn.disabled = false;   dlBtn.textContent = "Download";}
 };
 
 // ── gallery render (newest→oldest) ───────────────────────────────────────
@@ -563,6 +625,9 @@ render();
 
 // 1) Download Selected
 btnDownload.onclick = async () => {
+  btnDownload.textContent = "Downloading...";
+  btnDownload.disabled = true;
+
   if (selectedKeys.size === 0) return;
   const keys = Array.from(selectedKeys);
   if (keys.length === 1) {
@@ -595,10 +660,15 @@ btnDownload.onclick = async () => {
     a.click();
     a.remove();
   }
+  btnDownload.textContent = `Download (${selectedKeys.size})`;
+  btnDownload.disabled = false;
 };
 
 // 2) Delete Selected
 btnDelete.onclick = async () => {
+  btnDelete.textContent = "Deleting...";
+  btnDelete.disabled = true;
+
   const count = selectedKeys.size;
   if (!confirm(`Are you sure you want to delete ${count} file${count>1?'s':''}?`)) {
     return;
@@ -618,6 +688,8 @@ btnDelete.onclick = async () => {
   }
   selectedKeys.clear();
   updateToolbar();
+  btnDelete.textContent = `Delete (${selectedKeys.size})`;
+  btnDelete.disabled = false;
 };
 
 </script>
